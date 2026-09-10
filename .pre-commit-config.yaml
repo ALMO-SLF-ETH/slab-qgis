@@ -1,0 +1,9 @@
+# Static checks that do not need a QGIS interpreter. Type-checking and the pytest suite run
+# under QGIS's own Python (see README) and are therefore not wired in here.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

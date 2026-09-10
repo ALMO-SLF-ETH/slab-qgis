@@ -1,0 +1,27 @@
+# Tooling configuration for the ALMO Sweep QGIS plugin.
+#
+# The plugin is NOT a pip-installed distribution -- QGIS loads it from the
+# `almo_sweep_qgis/` folder (see README). This file only configures the dev tools.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["almo_sweep_qgis", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+# QGIS/Qt lifecycle hooks and the plugin entry point must keep their camelCase names.
+ignore = ["N802"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Make the plugin package importable without installation.
+pythonpath = ["."]
+
+[tool.mypy]
+# The plugin runs inside QGIS's interpreter and imports qgis.*, which ships only partial
+# type stubs; type-check it under that interpreter, leniently. This is intentionally not
+# the strict configuration used by the almo-sweep core.
+python_version = "3.12"
+ignore_missing_imports = true
