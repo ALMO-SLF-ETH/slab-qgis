@@ -27,6 +27,7 @@ from qgis.PyQt.QtWidgets import (
 
 from almo_sweep_qgis import engine
 from almo_sweep_qgis.panels.inputs_page import InputsPage
+from almo_sweep_qgis.panels.run_page import RunPage
 from almo_sweep_qgis.state import StudyState
 
 #: Ordered section titles. The order is the intended left-to-right workflow.
@@ -53,9 +54,12 @@ class MainPanel(QgsDockWidget):
         self._nav.addItems(PAGE_TITLES)
 
         self._stack = QStackedWidget(container)
-        self._stack.addWidget(InputsPage(self.state))  # index 0: Inputs
-        for title in PAGE_TITLES[1:]:
-            self._stack.addWidget(_placeholder_page(title))
+        # Pages are added in PAGE_TITLES order; real pages replace placeholders as built.
+        self._stack.addWidget(InputsPage(self.state))  # 0: Inputs
+        self._stack.addWidget(_placeholder_page("Parameters"))  # 1: Parameters
+        self._stack.addWidget(_placeholder_page("Study"))  # 2: Study
+        self._stack.addWidget(RunPage(self.state))  # 3: Run
+        self._stack.addWidget(_placeholder_page("Results"))  # 4: Results
 
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
         self._nav.setCurrentRow(0)

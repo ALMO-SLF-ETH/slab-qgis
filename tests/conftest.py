@@ -9,6 +9,7 @@ put on ``sys.path`` so the tests can exercise manifest-driven UI without a prior
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,8 +20,16 @@ from qgis.testing import start_app
 
 _SIM_ROOT = Path(__file__).resolve().parents[2]  # .../ALMO/Simulations
 _ENGINE_SRC = _SIM_ROOT / "almo-sweep" / "src"
-if _ENGINE_SRC.is_dir() and str(_ENGINE_SRC) not in sys.path:
-    sys.path.insert(0, str(_ENGINE_SRC))
+if _ENGINE_SRC.is_dir():
+    # In-process import (this interpreter) ...
+    if str(_ENGINE_SRC) not in sys.path:
+        sys.path.insert(0, str(_ENGINE_SRC))
+    # ... and for model subprocesses the executor spawns, which must import the engine too.
+    _pp = os.environ.get("PYTHONPATH", "")
+    if str(_ENGINE_SRC) not in _pp.split(os.pathsep):
+        os.environ["PYTHONPATH"] = (
+            os.pathsep.join([str(_ENGINE_SRC), _pp]) if _pp else str(_ENGINE_SRC)
+        )
 
 
 @pytest.fixture(scope="session")
