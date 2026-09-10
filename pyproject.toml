@@ -10,8 +10,9 @@ src = ["almo_sweep_qgis", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
-# QGIS/Qt lifecycle hooks and the plugin entry point must keep their camelCase names.
-ignore = ["N802"]
+# QGIS/Qt lifecycle hooks and entry points keep camelCase names (N802); Qt signal attributes
+# are conventionally camelCase class variables (N815).
+ignore = ["N802", "N815"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
