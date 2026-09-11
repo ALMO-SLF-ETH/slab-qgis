@@ -9,6 +9,8 @@ False only when execution itself could not proceed (e.g. a bad invocation).
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any
 
 from qgis.core import QgsTask
@@ -29,7 +31,10 @@ class RunTask(QgsTask):
     def run(self) -> bool:
         try:
             self.result = engine.run_one(
-                self._manifest, self._runspec, on_progress=self._on_progress
+                self._manifest,
+                self._runspec,
+                on_progress=self._on_progress,
+                substitutions={"python": _qgis_python()},
             )
         except Exception as exc:
             self.error_message = str(exc)
@@ -38,3 +43,18 @@ class RunTask(QgsTask):
 
     def _on_progress(self, event: Any) -> None:
         self.setProgress(float(event.progress) * 100.0)
+
+
+def _qgis_python() -> str:
+    """Path to QGIS's Python interpreter, for models whose command uses ``{python}``.
+
+    In the GUI ``sys.executable`` may be ``qgis-bin.exe`` rather than the interpreter, but the
+    interpreter sits in the same directory, so look for it there and fall back to
+    ``sys.executable``.
+    """
+    bindir = os.path.dirname(sys.executable)
+    for name in ("python3.exe", "python.exe", "python3", "python"):
+        candidate = os.path.join(bindir, name)
+        if os.path.exists(candidate):
+            return candidate
+    return sys.executable

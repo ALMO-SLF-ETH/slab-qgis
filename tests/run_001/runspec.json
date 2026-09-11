@@ -1,0 +1,44 @@
+{
+  "schema": "1.0",
+  "run_id": "run_001",
+  "model": {
+    "name": "dampm",
+    "version": "0.1.0"
+  },
+  "params": {
+    "rho": 2500.0,
+    "h0": 30.0,
+    "phi": 0.0,
+    "gravity": 9.8045,
+    "output_dt": 5.0,
+    "total_time": 80.0,
+    "C_cfl": 0.5,
+    "dt_max": 0.06,
+    "flip_ratio": 0.9,
+    "friction_type": "COULOMB",
+    "coulomb_mu": 0.531167,
+    "voellmy_mu": 0.2,
+    "voellmy_xi": 200.0,
+    "muI_mu_1": 0.2,
+    "muI_mu_2": 0.9,
+    "muI_I0": 0.1,
+    "muI_d": 0.005,
+    "muI_phi": 0.6,
+    "slope_theta_deg": 25.0,
+    "sampling_method": "POISSON"
+  },
+  "inputs": {
+    "dem": "C:/Users/dipietro/Documents/GitHub/ALMO/Simulations/QGIS_Test_Project/Rasters/dem_brienz.asc",
+    "release_zones": "C:/Users/dipietro/Documents/GitHub/ALMO/Simulations/QGIS_Test_Project/Releases/release_brienz.shp"
+  },
+  "outputs": {
+    "dir": "C:\\Users\\dipietro\\Documents\\GitHub\\ALMO\\Simulations\\QGIS_Simulation_GUI\\tests\\run_001",
+    "store": [
+      "final_grid",
+      "grid_series",
+      "particles",
+      "info"
+    ]
+  },
+  "seed": null
+}
