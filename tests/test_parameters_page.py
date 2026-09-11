@@ -41,7 +41,8 @@ def test_editing_spinbox_updates_state_and_clamps(qgis_app: QgsApplication, mani
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    spin = next(sb for sb in page.findChildren(QDoubleSpinBox) if sb.suffix().strip() == "deg")
+    # friction_angle is the float bounded to [0, 60]; identify it by its maximum.
+    spin = next(sb for sb in page.findChildren(QDoubleSpinBox) if sb.maximum() == 60.0)
     spin.setValue(45.0)
     assert state.param_values["friction_angle"] == 45.0
     spin.setValue(999.0)  # manifest max is 60 -> widget clamps

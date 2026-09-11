@@ -15,6 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QSpinBox,
     QVBoxLayout,
@@ -75,9 +76,9 @@ class ParametersPage(QWidget):
     def _make_control(self, name: str, spec: Any) -> QWidget:
         ptype = str(spec.type)
         if ptype == "float":
-            return self._float_control(name, spec)
+            return _with_unit(self._float_control(name, spec), spec.unit)
         if ptype == "int":
-            return self._int_control(name, spec)
+            return _with_unit(self._int_control(name, spec), spec.unit)
         if ptype == "bool":
             return self._bool_control(name, spec)
         if ptype == "choice":
@@ -94,8 +95,6 @@ class ParametersPage(QWidget):
             spec.min if spec.min is not None else -_FLOAT_LIMIT,
             spec.max if spec.max is not None else _FLOAT_LIMIT,
         )
-        if spec.unit:
-            box.setSuffix(f" {spec.unit}")
         box.setToolTip(spec.description or "")
         box.setValue(float(spec.default))
         box.valueChanged.connect(lambda value, n=name: self._set(n, float(value)))
@@ -107,8 +106,6 @@ class ParametersPage(QWidget):
             int(spec.min) if spec.min is not None else -_INT_LIMIT,
             int(spec.max) if spec.max is not None else _INT_LIMIT,
         )
-        if spec.unit:
-            box.setSuffix(f" {spec.unit}")
         box.setToolTip(spec.description or "")
         box.setValue(int(spec.default))
         box.valueChanged.connect(lambda value, n=name: self._set(n, int(value)))
@@ -139,3 +136,15 @@ def _label_for(spec: Any) -> QLabel:
     label = QLabel(f"<b>{spec.name}</b>")
     label.setToolTip(spec.description or "")
     return label
+
+
+def _with_unit(control: QWidget, unit: str | None) -> QWidget:
+    """Place the unit as a label to the right of the field, so the field holds only a value."""
+    if not unit:
+        return control
+    container = QWidget()
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(control, 1)
+    layout.addWidget(QLabel(unit))
+    return container
