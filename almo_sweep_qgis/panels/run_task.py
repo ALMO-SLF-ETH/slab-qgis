@@ -15,7 +15,7 @@ from typing import Any
 
 from qgis.core import QgsTask
 
-from almo_sweep_qgis import engine
+from almo_sweep_qgis import engine, settings
 
 
 class RunTask(QgsTask):
@@ -29,12 +29,17 @@ class RunTask(QgsTask):
         self.error_message: str | None = None
 
     def run(self) -> bool:
+        # Supply the model's configured runtime settings (e.g. DAMPM_BIN) as env vars, so no
+        # shell environment is needed when QGIS is launched normally.
+        env = dict(os.environ)
+        env.update(settings.runtime_env(self._manifest))
         try:
             self.result = engine.run_one(
                 self._manifest,
                 self._runspec,
                 on_progress=self._on_progress,
                 substitutions={"python": _qgis_python()},
+                env=env,
             )
         except Exception as exc:
             self.error_message = str(exc)

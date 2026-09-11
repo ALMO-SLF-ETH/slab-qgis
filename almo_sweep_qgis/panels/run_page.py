@@ -30,7 +30,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import engine
+from almo_sweep_qgis import engine, settings
 from almo_sweep_qgis.panels.run_task import RunTask
 from almo_sweep_qgis.state import StudyState
 
@@ -84,6 +84,15 @@ class RunPage(QWidget):
         if not engine.AVAILABLE:
             self._set_status(f"Engine not installed. {engine.INSTALL_HINT}")
             return
+        manifest = self._state.manifest
+        if manifest is not None:
+            missing = settings.missing_required(manifest)
+            if missing:
+                self._set_status(
+                    "Configure the model's required settings first via 'Model settings…': "
+                    + ", ".join(missing)
+                )
+                return
         try:
             runspec = self._build_runspec()
         except Exception as exc:

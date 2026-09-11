@@ -20,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -29,6 +30,7 @@ from almo_sweep_qgis import engine
 from almo_sweep_qgis.panels.inputs_page import InputsPage
 from almo_sweep_qgis.panels.parameters_page import ParametersPage
 from almo_sweep_qgis.panels.run_page import RunPage
+from almo_sweep_qgis.panels.settings_dialog import RuntimeSettingsDialog
 from almo_sweep_qgis.state import StudyState
 
 #: Ordered section titles. The order is the intended left-to-right workflow.
@@ -81,6 +83,12 @@ class MainPanel(QgsDockWidget):
         self._model_file.setFilter("Model manifest (*.toml);;All files (*.*)")
         self._model_file.fileChanged.connect(self._on_model_file_changed)
         row.addWidget(self._model_file, 1)
+
+        self._settings_button = QPushButton("Model settings…")
+        self._settings_button.setToolTip("Configure this model's runtime settings")
+        self._settings_button.setEnabled(False)
+        self._settings_button.clicked.connect(self._open_settings)
+        row.addWidget(self._settings_button, 0)
         header.addLayout(row)
 
         self._model_status = QLabel(self._default_status())
@@ -98,6 +106,7 @@ class MainPanel(QgsDockWidget):
         path = (path or "").strip()
         if not path:
             self.state.set_manifest(None)
+            self._settings_button.setEnabled(False)
             self._model_status.setText(self._default_status())
             return
         if not engine.AVAILABLE:
@@ -107,13 +116,20 @@ class MainPanel(QgsDockWidget):
             manifest = engine.load_manifest(path)
         except Exception as exc:
             self.state.set_manifest(None)
+            self._settings_button.setEnabled(False)
             self._model_status.setText(f"Invalid manifest: {exc}")
             return
         self.state.set_manifest(manifest, path)
+        self._settings_button.setEnabled(bool(manifest.runtime))
         self._model_status.setText(
             f"Loaded {manifest.name} {manifest.version} — "
             f"{len(manifest.inputs)} inputs, {len(manifest.params)} parameters."
         )
+
+    def _open_settings(self) -> None:
+        manifest = self.state.manifest
+        if manifest is not None and manifest.runtime:
+            RuntimeSettingsDialog(manifest, self).exec()
 
 
 def _placeholder_page(title: str) -> QWidget:
