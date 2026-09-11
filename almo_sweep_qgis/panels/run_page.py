@@ -19,7 +19,9 @@ from qgis.core import (
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtWidgets import (
+    QCheckBox,
     QFormLayout,
+    QGroupBox,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -53,6 +55,15 @@ class RunPage(QWidget):
         self._out_dir.setDialogTitle("Choose an output folder")
         form.addRow("Output folder", self._out_dir)
         root.addLayout(form)
+
+        # Outputs to store: rebuilt from the manifest. Non-optional outputs are always kept
+        # (checked and disabled); optional ones the user may switch off.
+        self._outputs_group = QGroupBox("Outputs to store")
+        self._outputs_layout = QVBoxLayout(self._outputs_group)
+        self._output_checks: dict[str, QCheckBox] = {}
+        root.addWidget(self._outputs_group)
+        state.manifestChanged.connect(self._rebuild_outputs)
+        self._rebuild_outputs(state.manifest)
 
         self._run_button = QPushButton("Run")
         self._run_button.clicked.connect(self._on_run_clicked)
@@ -120,7 +131,32 @@ class RunPage(QWidget):
             inputs=inputs,
             params=params,
             output_dir=output_dir,
+            store_outputs=self._selected_outputs(),
         )
+
+    # -- output selection --------------------------------------------------------------
+    def _rebuild_outputs(self, manifest: Any | None) -> None:
+        while self._outputs_layout.count():
+            item = self._outputs_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._output_checks.clear()
+
+        outputs = manifest.outputs if manifest is not None else {}
+        self._outputs_group.setVisible(bool(outputs))
+        for name, spec in outputs.items():
+            check = QCheckBox(name)
+            check.setChecked(True)
+            check.setToolTip(spec.description or "")
+            if not spec.optional:
+                check.setEnabled(False)  # always stored
+            self._outputs_layout.addWidget(check)
+            self._output_checks[name] = check
+
+    def _selected_outputs(self) -> list[str]:
+        return [name for name, check in self._output_checks.items() if check.isChecked()]
 
     # -- completion (main thread) ------------------------------------------------------
     def _on_completed(self) -> None:
