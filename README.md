@@ -1,71 +1,170 @@
 # ALMO Sweep — QGIS plugin
 
 A QGIS 4 / Qt 6 front-end for the [almo-sweep](../almo-sweep) simulation engine. Load a DEM
-and release-zone layers, build a model's parameters from its manifest, run deterministic or
-probabilistic mass-movement studies, and inspect the results — all from the map canvas.
+and release-zone layers, build a model's parameters from its manifest, run mass-movement
+simulations, and load the results back onto the map — all from the QGIS canvas.
 
-> Status: **Phase 0 shell.** The plugin loads, adds a toolbar button and a dockable panel
-> with the five workflow sections (Inputs · Parameters · Study · Run · Results). The pages
-> are placeholders, filled in step by step.
+The plugin is **model-agnostic**: it drives any model that ships an ALMO *manifest*
+(`model.toml`). This guide uses the [dampm](../dampm) model as the example.
 
-## Layout
+---
+
+## Requirements
+
+- **QGIS 4.x / Qt 6** (developed against QGIS 4.2.2; also runs on the QGIS 3.44 Qt 6 build).
+- The **almo-sweep** engine (pure Python, stdlib + numpy).
+- A **model** to run: its ALMO adapter (e.g. `dampm_interface`) plus its built binary. See
+  the model's own README (e.g. [dampm](../dampm/README.md)) for building the binary.
+
+The engine and the model adapter are Python packages that must be installed **into QGIS's own
+Python interpreter** (not a system/conda Python). The steps below do this in order.
+
+---
+
+## Install
+
+Follow these steps top to bottom.
+
+### 1. Locate QGIS's Python interpreter
+
+Open **QGIS ▸ Plugins ▸ Python Console** and run:
+
+```python
+import sys; print(sys.executable)
+```
+
+You'll use this interpreter for the `pip` steps below. Typical locations (yours may differ):
+
+| OS | QGIS Python for `pip` |
+|----|-----------------------|
+| **Windows** | `C:\Program Files\QGIS 4.2.2\bin\python-qgis.bat` |
+| **macOS**   | `/Applications/QGIS-<version>.app/Contents/MacOS/python` |
+| **Linux**   | the system `python3` QGIS was built against (often just `python3`) |
+
+Below, `<qgis-python>` means that interpreter.
+
+### 2. Install the engine into QGIS's Python
+
+```bash
+<qgis-python> -m pip install -e /path/to/ALMO/Simulations/almo-sweep
+```
+
+### 3. Install the model adapter into QGIS's Python
+
+For dampm:
+
+```bash
+<qgis-python> -m pip install -e /path/to/ALMO/Simulations/dampm/interface
+```
+
+You also need dampm's compiled binary — build it per [dampm/README.md](../dampm/README.md).
+You will point the plugin at that binary in step 7 (no environment variables needed).
+
+> **macOS note:** if pip can't write into the app bundle, prefix the command with `sudo`.
+
+### 4. Link the plugin into your QGIS profile
+
+Find your profile's plugin folder via **QGIS ▸ Settings ▸ User Profiles ▸ Open Active Profile
+Folder**, then go into `python/plugins/`. Typical defaults:
+
+| OS | Plugins folder |
+|----|----------------|
+| **Windows** | `%APPDATA%\QGIS\QGIS4\profiles\default\python\plugins` |
+| **macOS**   | `~/Library/Application Support/QGIS/QGIS4/profiles/default/python/plugins` |
+| **Linux**   | `~/.local/share/QGIS/QGIS4/profiles/default/python/plugins` |
+
+Link the `almo_sweep_qgis/` folder into it (a link means code changes are picked up on
+reload — no re-copying):
+
+**Windows** (PowerShell; junctions need no admin rights):
+```powershell
+$plugins = "$env:APPDATA\QGIS\QGIS4\profiles\default\python\plugins"
+New-Item -ItemType Directory -Force -Path $plugins | Out-Null
+New-Item -ItemType Junction -Path "$plugins\almo_sweep_qgis" `
+         -Target "C:\path\to\ALMO\Simulations\QGIS_Simulation_GUI\almo_sweep_qgis"
+```
+
+**macOS / Linux**:
+```bash
+plugins="$HOME/Library/Application Support/QGIS/QGIS4/profiles/default/python/plugins"  # macOS
+# plugins="$HOME/.local/share/QGIS/QGIS4/profiles/default/python/plugins"               # Linux
+mkdir -p "$plugins"
+ln -s /path/to/ALMO/Simulations/QGIS_Simulation_GUI/almo_sweep_qgis "$plugins/almo_sweep_qgis"
+```
+
+*(If you can't create a link, copying the `almo_sweep_qgis/` folder in also works; you'll
+re-copy after each code change.)*
+
+### 5. Enable the plugin
+
+Restart QGIS. Open **Plugins ▸ Manage and Install Plugins**, tick **Show also experimental
+plugins** under *Settings*, then enable **ALMO Sweep** under *Installed*. A green-slope
+toolbar button appears; click it to show the **ALMO Sweep** dock panel.
+
+---
+
+## Use
+
+### 6. Load a model
+
+In the panel header, click **Model → Browse** and select the model's manifest, e.g.
+`dampm/interface/model.toml`. The status line confirms the model, its inputs and parameters.
+
+### 7. Configure the model's runtime settings (once per machine)
+
+Click **Model settings…** (next to the model selector) and fill in the paths the model needs.
+For dampm:
+
+- **`DAMPM_BIN`** — the compiled dampm executable (required).
+- **`DAMPM_DLL_DIR`** — **Windows only**: the folder with dampm's runtime DLLs
+  (e.g. `C:\msys64\ucrt64\bin` for an MSYS2 build). **Leave empty on macOS/Linux.**
+
+These are stored in QGIS settings and remembered across sessions — no environment variables,
+no launching QGIS from a terminal.
+
+### 8. Pick inputs, parameters and run
+
+1. **Inputs** — choose the DEM raster and the release-zone polygon layer. (For dampm the DEM
+   must be an ESRI ASCII `.asc` and the release a polygon shapefile; load them into QGIS first.)
+2. **Parameters** — adjust as needed (defaults come from the manifest).
+3. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
+   Progress shows in the panel and in QGIS's task bar; on success the output raster(s) are
+   added to your project. Each run's `runspec.json`, `simConfig.json` and `result.json` are
+   written into the output folder for provenance.
+
+---
+
+## Development
+
+### Layout
 
 ```
 almo_sweep_qgis/            the plugin package (this folder is what QGIS loads)
   __init__.py               classFactory entry point
   metadata.txt              QGIS plugin metadata
   plugin.py                 AlmoSweepPlugin: menu/toolbar + dock lifecycle
-  panels/main_panel.py      the dockable panel and its section navigator
+  settings.py               per-model runtime settings (QgsSettings)
+  panels/                   main_panel, inputs_page, parameters_page, run_page,
+                            run_task, settings_dialog
   resources/icon.svg        toolbar icon
-tests/                      headless smoke tests (run under QGIS's Python)
+tests/                      headless tests (run under QGIS's Python)
 ```
 
-The plugin is the only part of the stack that imports `qgis`. All model-agnostic logic lives
-in the `almo-sweep` engine, which the plugin imports to read manifests and drive runs.
+The plugin is the only part of the stack that imports `qgis`; all model-agnostic logic lives
+in the `almo-sweep` engine.
 
-## Requirements
+### Tests
 
-- **QGIS 4.x / Qt 6** (developed against QGIS 4.2.2). Also runs on the QGIS 3.44 Qt 6 build.
-- The **almo-sweep** engine installed into QGIS's Python (see below).
+The tests import `qgis`, so they run under QGIS's Python (install `pytest` there once):
 
-## Install for development
-
-1. Install the engine into QGIS's own interpreter (one time; it is stdlib + numpy only):
-
-   ```powershell
-   & "C:\Program Files\QGIS 4.2.2\bin\python-qgis.bat" -m pip install -e "..\almo-sweep"
-   ```
-
-2. Make QGIS see the plugin by linking the `almo_sweep_qgis/` folder into your active
-   profile's plugin directory. QGIS 4 uses the `QGIS4` profile root (QGIS 3 uses `QGIS3`);
-   confirm via **QGIS ▸ Settings ▸ User Profiles ▸ Open Active Profile Folder**, then
-   `python\plugins\`. For QGIS 4.2.2's default profile (run in an **elevated** PowerShell, as
-   symlinks need admin):
-
-   ```powershell
-   $plugins = "$env:APPDATA\QGIS\QGIS4\profiles\default\python\plugins"
-   New-Item -ItemType Directory -Force -Path $plugins | Out-Null
-   New-Item -ItemType SymbolicLink -Path "$plugins\almo_sweep_qgis" `
-            -Target "$PWD\almo_sweep_qgis"
-   ```
-
-3. Restart QGIS (or use *Plugin Reloader*), then enable **ALMO Sweep** in
-   *Plugins ▸ Manage and Install Plugins* (tick *Show also experimental plugins* under
-   *Settings* if it does not appear).
-
-## Tests
-
-The tests import `qgis`, so they run under QGIS's Python, which needs `pytest` once:
-
-```powershell
-$py = "C:\Program Files\QGIS 4.2.2\bin\python-qgis.bat"
-& $py -m pip install pytest
-& $py -m pytest
+```bash
+<qgis-python> -m pip install pytest
+<qgis-python> -m pytest
 ```
 
-## Static checks
+### Static checks
 
-Linting and formatting need no QGIS and run via pre-commit:
+Linting/formatting need no QGIS and run via pre-commit:
 
 ```bash
 pre-commit run --all-files
