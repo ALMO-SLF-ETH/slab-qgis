@@ -27,6 +27,7 @@ from qgis.PyQt.QtWidgets import (
 
 from almo_sweep_qgis import engine
 from almo_sweep_qgis.panels.inputs_page import InputsPage
+from almo_sweep_qgis.panels.parameters_page import ParametersPage
 from almo_sweep_qgis.panels.run_page import RunPage
 from almo_sweep_qgis.state import StudyState
 
@@ -56,7 +57,7 @@ class MainPanel(QgsDockWidget):
         self._stack = QStackedWidget(container)
         # Pages are added in PAGE_TITLES order; real pages replace placeholders as built.
         self._stack.addWidget(InputsPage(self.state))  # 0: Inputs
-        self._stack.addWidget(_placeholder_page("Parameters"))  # 1: Parameters
+        self._stack.addWidget(ParametersPage(self.state))  # 1: Parameters
         self._stack.addWidget(_placeholder_page("Study"))  # 2: Study
         self._stack.addWidget(RunPage(self.state))  # 3: Run
         self._stack.addWidget(_placeholder_page("Results"))  # 4: Results

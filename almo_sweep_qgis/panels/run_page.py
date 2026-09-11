@@ -104,7 +104,9 @@ class RunPage(QWidget):
             if layer is not None:
                 inputs[name] = layer.source()
 
-        params = engine.build_sweep(manifest).samples(manifest)[0]
+        # Edited values from the Parameters page; resolve_runspec fills any gaps with
+        # manifest defaults, so this works even if that page was never opened.
+        params = dict(self._state.param_values)
 
         run_name = self._name_edit.text().strip() or "run"
         base = self._out_dir.filePath().strip()

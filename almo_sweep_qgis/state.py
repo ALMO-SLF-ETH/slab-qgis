@@ -26,6 +26,8 @@ class StudyState(QObject):
         self._manifest_path: str | None = None
         #: input name -> selected map-layer id (or ``None`` if unset).
         self.input_layers: dict[str, str | None] = {}
+        #: parameter name -> current value (seeded with manifest defaults).
+        self.param_values: dict[str, Any] = {}
 
     @property
     def manifest(self) -> Any | None:
@@ -40,4 +42,5 @@ class StudyState(QObject):
         self._manifest = manifest
         self._manifest_path = path
         self.input_layers = {}
+        self.param_values = {}
         self.manifestChanged.emit(manifest)
