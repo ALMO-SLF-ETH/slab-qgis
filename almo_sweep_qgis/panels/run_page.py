@@ -156,7 +156,7 @@ class RunPage(QWidget):
         outputs = manifest.outputs if manifest is not None else {}
         self._outputs_group.setVisible(bool(outputs))
         for name, spec in outputs.items():
-            check = QCheckBox(name)
+            check = QCheckBox(spec.display_label)
             check.setChecked(True)
             check.setToolTip(spec.description or "")
             if not spec.optional:

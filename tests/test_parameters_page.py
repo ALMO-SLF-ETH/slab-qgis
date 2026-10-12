@@ -9,7 +9,7 @@ from almo_sweep_qgis import engine
 from almo_sweep_qgis.panels.parameters_page import ParametersPage
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
-from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox
+from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, QSpinBox
 
 
 @pytest.fixture
@@ -22,10 +22,47 @@ def test_controls_match_manifest(qgis_app: QgsApplication, manifest) -> None:
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    # dampm: 3 float params + 1 choice, no bools.
+    # dampm fixture: 3 float params + 1 int + 1 choice, no bools.
     assert len(page.findChildren(QDoubleSpinBox)) == 3
+    assert len(page.findChildren(QSpinBox)) == 1
     assert len(page.findChildren(QComboBox)) == 1
     assert page.findChildren(QCheckBox) == []
+
+
+def test_params_are_laid_out_in_declared_groups(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    titles = [b.title() for b in page.findChildren(QGroupBox)]
+    assert titles == ["Physical parameters", "Numerics"]
+
+
+def test_dependent_param_visibility_follows_controller(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    # rk4_stages (the only int) is visible_when integrator == "rk4" (the default).
+    spin = page.findChildren(QSpinBox)[0]
+    assert not spin.isHidden()
+    combo = page.findChildren(QComboBox)[0]
+    combo.setCurrentIndex(combo.findText("euler"))
+    assert spin.isHidden()  # hidden once the controlling choice no longer matches
+    combo.setCurrentIndex(combo.findText("rk4"))
+    assert not spin.isHidden()  # and shown again when it does
+    # hidden params keep their value in study state regardless
+    combo.setCurrentIndex(combo.findText("euler"))
+    assert state.param_values["rk4_stages"] == 4
+
+
+def test_label_uses_manifest_label_not_name(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    from qgis.PyQt.QtWidgets import QLabel
+
+    texts = [lbl.text() for lbl in page.findChildren(QLabel)]
+    assert any("Basal friction angle" in t for t in texts)
+    assert not any(">friction_angle<" in t for t in texts)
 
 
 def test_defaults_are_seeded_into_state(qgis_app: QgsApplication, manifest) -> None:

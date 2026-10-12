@@ -76,7 +76,7 @@ class InputsPage(QWidget):
 
 def _label_for(spec: Any) -> QLabel:
     suffix = "" if spec.required else " <i>(optional)</i>"
-    label = QLabel(f"<b>{spec.name}</b>{suffix}")
+    label = QLabel(f"<b>{spec.display_label}</b>{suffix}")
     label.setToolTip(spec.description or "")
     return label
 

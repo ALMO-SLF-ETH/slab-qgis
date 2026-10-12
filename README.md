@@ -126,7 +126,10 @@ no launching QGIS from a terminal.
 
 1. **Inputs** — choose the DEM raster and the release-zone polygon layer. (For dampm the DEM
    must be an ESRI ASCII `.asc` and the release a polygon shapefile; load them into QGIS first.)
-2. **Parameters** — adjust as needed (defaults come from the manifest).
+2. **Parameters** — adjust as needed (defaults come from the manifest). Controls are shown
+   under their manifest **group** headings and labelled with their human names; parameters
+   that only apply in certain cases appear automatically when relevant (e.g. the Voellmy
+   coefficients show only when the friction law is set to Voellmy).
 3. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
    Progress shows in the panel and in QGIS's task bar; on success the output raster(s) are
    added to your project. Each run's `runspec.json`, `simConfig.json` and `result.json` are
