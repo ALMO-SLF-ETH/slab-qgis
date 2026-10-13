@@ -2,11 +2,11 @@
 
 The sections mirror the study workflow end to end:
 
-1. **Inputs**     -- pick the DEM raster and the release-zone layer(s).
-2. **Parameters** -- the model's parameter form, built from its manifest.
-3. **Study**      -- deterministic run or a probabilistic sweep (distributions, samples).
-4. **Run**        -- name, output folder, output selection, launch and monitor.
-5. **Results**    -- browse and inspect the runs produced.
+1. **Parameters** -- the model's inputs *and* parameters, built from its manifest (the DEM and
+   release-zone layers are chosen here, beside the parameters that select them).
+2. **Study**      -- deterministic run or a probabilistic sweep (distributions, samples).
+3. **Run**        -- name, output folder, output selection, launch and monitor.
+4. **Results**    -- browse and inspect the runs produced.
 
 A model manifest is selected once at the top; every page reads the active model (and the
 user's selections) from a shared :class:`~almo_sweep_qgis.state.StudyState`.
@@ -27,14 +27,13 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.inputs_page import InputsPage
 from almo_sweep_qgis.panels.parameters_page import ParametersPage
 from almo_sweep_qgis.panels.run_page import RunPage
 from almo_sweep_qgis.panels.settings_dialog import RuntimeSettingsDialog
 from almo_sweep_qgis.state import StudyState
 
-#: Ordered section titles. The order is the intended left-to-right workflow.
-PAGE_TITLES = ("Inputs", "Parameters", "Study", "Run", "Results")
+#: Ordered section titles. The order is the intended top-to-bottom workflow.
+PAGE_TITLES = ("Parameters", "Study", "Run", "Results")
 
 
 class MainPanel(QgsDockWidget):
@@ -58,11 +57,10 @@ class MainPanel(QgsDockWidget):
 
         self._stack = QStackedWidget(container)
         # Pages are added in PAGE_TITLES order; real pages replace placeholders as built.
-        self._stack.addWidget(InputsPage(self.state))  # 0: Inputs
-        self._stack.addWidget(ParametersPage(self.state))  # 1: Parameters
-        self._stack.addWidget(_placeholder_page("Study"))  # 2: Study
-        self._stack.addWidget(RunPage(self.state))  # 3: Run
-        self._stack.addWidget(_placeholder_page("Results"))  # 4: Results
+        self._stack.addWidget(ParametersPage(self.state))  # 0: Parameters (inputs + params)
+        self._stack.addWidget(_placeholder_page("Study"))  # 1: Study
+        self._stack.addWidget(RunPage(self.state))  # 2: Run
+        self._stack.addWidget(_placeholder_page("Results"))  # 3: Results
 
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
         self._nav.setCurrentRow(0)

@@ -93,6 +93,10 @@ class RunPage(QWidget):
                     + ", ".join(missing)
                 )
                 return
+            missing_inputs = self._missing_inputs(manifest)
+            if missing_inputs:
+                self._set_status("Select the required input(s): " + ", ".join(missing_inputs))
+                return
         try:
             runspec = self._build_runspec()
         except Exception as exc:
@@ -109,6 +113,24 @@ class RunPage(QWidget):
         task.taskTerminated.connect(self._on_terminated)
         self._task = task
         QgsApplication.taskManager().addTask(task)
+
+    def _missing_inputs(self, manifest: Any) -> list[str]:
+        """Inputs that must be chosen for the current configuration but are not.
+
+        An input is needed now if it is currently visible (its ``visible_when`` holds) and it
+        is either always required or conditional (``visible_when`` implies "required when
+        shown" — e.g. the release layer for a POLYGON release). Always-optional inputs never
+        block a run.
+        """
+        values = self._state.param_values
+        missing: list[str] = []
+        for name, spec in manifest.inputs.items():
+            if not spec.is_visible(values):
+                continue
+            required_now = spec.required or bool(spec.visible_when)
+            if required_now and not self._state.input_layers.get(name):
+                missing.append(spec.display_label)
+        return missing
 
     def _build_runspec(self) -> Any:
         manifest = self._state.manifest

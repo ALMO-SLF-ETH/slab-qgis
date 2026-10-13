@@ -122,15 +122,16 @@ For dampm:
 These are stored in QGIS settings and remembered across sessions — no environment variables,
 no launching QGIS from a terminal.
 
-### 8. Pick inputs, parameters and run
+### 8. Parameters (inputs + settings) and run
 
-1. **Inputs** — choose the DEM raster and the release-zone polygon layer. (For dampm the DEM
-   must be an ESRI ASCII `.asc` and the release a polygon shapefile; load them into QGIS first.)
-2. **Parameters** — adjust as needed (defaults come from the manifest). Controls are shown
-   under their manifest **group** headings and labelled with their human names; parameters
-   that only apply in certain cases appear automatically when relevant (e.g. the Voellmy
-   coefficients show only when the friction law is set to Voellmy).
-3. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
+1. **Parameters** — one page holds everything about the run: the spatial inputs *and* the
+   model settings, laid out under their manifest **group** headings and labelled with human
+   names. Controls that only apply in certain cases appear automatically when relevant — e.g.
+   the Voellmy coefficients show only when the friction law is Voellmy, and (for dampm) the
+   **release-zone layer appears only when the release shape is `POLYGON`**; `RECTANGLE` and
+   `ELLIPSE` releases are defined numerically instead. For dampm the DEM must be an ESRI ASCII
+   `.asc` and the release a polygon shapefile; load them into QGIS first.
+2. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
    Progress shows in the panel and in QGIS's task bar; on success the output raster(s) are
    added to your project. Each run's `runspec.json`, `simConfig.json` and `result.json` are
    written into the output folder for provenance.
@@ -147,7 +148,7 @@ almo_sweep_qgis/            the plugin package (this folder is what QGIS loads)
   metadata.txt              QGIS plugin metadata
   plugin.py                 AlmoSweepPlugin: menu/toolbar + dock lifecycle
   settings.py               per-model runtime settings (QgsSettings)
-  panels/                   main_panel, inputs_page, parameters_page, run_page,
+  panels/                   main_panel, parameters_page (inputs + params), run_page,
                             run_task, settings_dialog
   resources/icon.svg        toolbar icon
 tests/                      headless tests (run under QGIS's Python)
