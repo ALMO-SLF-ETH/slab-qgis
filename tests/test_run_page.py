@@ -133,3 +133,55 @@ def test_load_results_adds_raster_layer(
     loaded = page._load_results(RunResult.success("run", {"grid": tif}))
     assert loaded == 1
     assert len(QgsProject.instance().mapLayers()) == before + 1
+
+
+def _write_raster(path: str, bands: list[float]) -> None:
+    import numpy as np
+    from osgeo import gdal, osr
+
+    ds = gdal.GetDriverByName("GTiff").Create(path, 4, 4, len(bands), gdal.GDT_Float32)
+    ds.SetGeoTransform([0, 1, 0, 0, 0, -1])
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    ds.SetProjection(srs.ExportToWkt())
+    for b, value in enumerate(bands, start=1):
+        ds.GetRasterBand(b).WriteArray(np.full((4, 4), value, dtype="float32"))
+    ds = None
+
+
+def test_frame_series_loads_two_turbo_temporal_groups(
+    qgis_app: QgsApplication, toy_manifest, tmp_path: Path
+) -> None:
+    pytest.importorskip("osgeo")
+    from qgis.core import QgsSingleBandPseudoColorRenderer
+
+    frames = tmp_path / "rasters"
+    frames.mkdir()
+    for k in range(3):  # 2-band frames: band1 (h), band2 (v)
+        _write_raster(str(frames / f"rasters_frame_0{k}.tif"), [float(k), float(k) * 10.0])
+    # per-cell maxima over the run -> drive the colour upper bounds (band1=2, band2=20)
+    max_values = tmp_path / "max_values.tif"
+    _write_raster(str(max_values), [2.0, 20.0])
+
+    state = StudyState()
+    state.set_manifest(toy_manifest)
+    state.param_values["output_dt"] = 5.0  # frame spacing in seconds
+    page = RunPage(state)
+
+    n = page._load_frame_series("grid_series", str(frames), "run1", str(max_values))
+    assert n == 6  # 3 frames x 2 bands (h + v)
+    assert page._loaded_frame_series is True
+
+    temporal = [
+        lyr for lyr in QgsProject.instance().mapLayers().values() if lyr.name().startswith("t = ")
+    ]
+    pseudo = [
+        lyr for lyr in temporal if isinstance(lyr.renderer(), QgsSingleBandPseudoColorRenderer)
+    ]
+    assert len(pseudo) >= 6
+    assert all(lyr.temporalProperties().isActive() for lyr in pseudo)
+    # colour upper bound comes from max_values: band 1 -> 2.0, band 2 -> 20.0
+    band1 = [lyr for lyr in pseudo if lyr.renderer().band() == 1]
+    band2 = [lyr for lyr in pseudo if lyr.renderer().band() == 2]
+    assert band1 and all(abs(lyr.renderer().classificationMax() - 2.0) < 1e-6 for lyr in band1)
+    assert band2 and all(abs(lyr.renderer().classificationMax() - 20.0) < 1e-6 for lyr in band2)

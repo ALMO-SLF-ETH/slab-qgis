@@ -141,6 +141,14 @@ no launching QGIS from a terminal.
    added to your project. Each run's `runspec.json`, `simConfig.json` and `result.json` are
    written into the output folder for provenance.
 
+   A directory output that holds a **series of raster frames** (e.g. dampm's `grid_series`) is
+   loaded as **temporal groups** — one per band: **flow height (band 1)** and **velocity
+   (band 2)**. Each frame is one timestamp (spaced by the model's output interval) and is
+   rendered single-band pseudocolor with the **Turbo** ramp; the colour upper bound per band is
+   taken from `max_values.tif` (the per-cell maxima over the whole run), so colours are
+   consistent across frames and equal to the run's true maximum. Open **View ▸ Panels ▸
+   Temporal Controller** in animation mode to step/play through the frames in time.
+
 ---
 
 ## Development
