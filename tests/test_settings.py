@@ -41,6 +41,29 @@ def test_missing_required(qgis_app: QgsApplication, manifest) -> None:
     assert settings.missing_required(manifest) == []  # TOY_DIR is optional
 
 
+def test_model_registry_persists_add_remove_and_last(qgis_app: QgsApplication) -> None:
+    # start clean
+    for p in settings.registered_models():
+        settings.remove_model(p)
+    assert settings.registered_models() == []
+
+    settings.add_model(r"C:\models\a\model.toml")
+    settings.add_model(r"C:\models\b\model.toml")
+    settings.add_model(r"C:\models\a\model.toml")  # duplicate ignored
+    assert settings.registered_models() == [r"C:\models\a\model.toml", r"C:\models\b\model.toml"]
+
+    # a fresh read sees the same list (persisted via QgsSettings)
+    assert settings.registered_models() == [r"C:\models\a\model.toml", r"C:\models\b\model.toml"]
+
+    settings.set_last_model(r"C:\models\b\model.toml")
+    assert settings.last_model() == r"C:\models\b\model.toml"
+
+    # removing the last model also clears it as 'last'
+    settings.remove_model(r"C:\models\b\model.toml")
+    assert settings.registered_models() == [r"C:\models\a\model.toml"]
+    assert settings.last_model() == ""
+
+
 def test_dialog_builds_prefilled_fields(qgis_app: QgsApplication, manifest) -> None:
     settings.set_runtime_value("toy_settings", "TOY_BIN", "/opt/toy/bin")
     dlg = RuntimeSettingsDialog(manifest)

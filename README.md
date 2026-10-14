@@ -105,15 +105,20 @@ toolbar button appears; click it to show the **ALMO Sweep** dock panel.
 
 ## Use
 
-### 6. Load a model
+### 6. Register and select a model
 
-In the panel header, click **Model → Browse** and select the model's manifest, e.g.
-`dampm/interface/model.toml`. The status line confirms the model, its inputs and parameters.
+The panel header holds a **persistent list of models**. The first time, click **Add…** and
+select the model's manifest, e.g. `dampm/interface/model.toml` — it's added to the list and
+selected. On later launches it's already there: just pick it from the dropdown. **Remove**
+drops the selected entry. The list (and the last model you had open) survive QGIS restarts, and
+each model remembers its own runtime settings (below), so a model you've used before is ready
+to run with its binary/DLL paths already set. The status line confirms the model, its inputs
+and parameters.
 
 ### 7. Configure the model's runtime settings (once per machine)
 
 Click **Model settings…** (next to the model selector) and fill in the paths the model needs.
-For dampm:
+These are stored per model and reused every time you select it. For dampm:
 
 - **`DAMPM_BIN`** — the compiled dampm executable (required).
 - **`DAMPM_DLL_DIR`** — **Windows only**: the folder with dampm's runtime DLLs

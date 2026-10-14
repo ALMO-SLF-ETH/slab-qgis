@@ -13,10 +13,63 @@ from typing import Any
 from qgis.core import QgsSettings
 
 _PREFIX = "almo_sweep/runtime"
+#: Registry of model manifests the user has added, and the last one they had open.
+_MODELS_KEY = "almo_sweep/models"
+_LAST_MODEL_KEY = "almo_sweep/last_model"
 
 
 def _key(model_name: str, var: str) -> str:
     return f"{_PREFIX}/{model_name}/{var}"
+
+
+# ---------------------------------------------------------------------------
+# Model registry: a persistent list of manifest paths the user has added
+# ---------------------------------------------------------------------------
+def _as_str_list(value: Any) -> list[str]:
+    """QgsSettings may hand back a list, a single string, or None for a stored list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    try:
+        return [str(v) for v in value if str(v)]
+    except TypeError:
+        return []
+
+
+def registered_models() -> list[str]:
+    """The manifest paths the user has added, in insertion order (deduplicated)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for path in _as_str_list(QgsSettings().value(_MODELS_KEY)):
+        if path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
+def add_model(path: str) -> None:
+    """Add ``path`` to the registry (no-op if already present)."""
+    models = registered_models()
+    if path and path not in models:
+        models.append(path)
+        QgsSettings().setValue(_MODELS_KEY, models)
+
+
+def remove_model(path: str) -> None:
+    """Drop ``path`` from the registry (and clear it as the last model if it was)."""
+    QgsSettings().setValue(_MODELS_KEY, [p for p in registered_models() if p != path])
+    if last_model() == path:
+        set_last_model("")
+
+
+def last_model() -> str:
+    """The manifest path last selected (empty string if none / not set)."""
+    return str(QgsSettings().value(_LAST_MODEL_KEY, "") or "")
+
+
+def set_last_model(path: str) -> None:
+    QgsSettings().setValue(_LAST_MODEL_KEY, path)
 
 
 def runtime_value(model_name: str, var: str) -> str:
