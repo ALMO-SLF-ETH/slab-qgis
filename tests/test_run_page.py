@@ -86,6 +86,60 @@ def test_missing_inputs_enforces_visible_conditional_input(qgis_app: QgsApplicat
     assert page._missing_inputs(m) == []
 
 
+def test_inputs_being_edited_blocks_uncommitted_layer(qgis_app: QgsApplication) -> None:
+    from almo_sweep.contracts import parse_manifest
+    from qgis.core import QgsVectorLayer
+
+    m = parse_manifest(
+        {
+            "model": {"name": "m", "version": "1"},
+            "invocation": {"command": ["x"]},
+            "groups": [{"id": "release"}],
+            "params": {
+                "release_type": {
+                    "type": "choice",
+                    "default": "POLYGON",
+                    "choices": ["POLYGON", "RECTANGLE"],
+                    "group": "release",
+                }
+            },
+            "inputs": {
+                "zones": {
+                    "kind": "vector",
+                    "geometry": "polygon",
+                    "required": False,
+                    "group": "release",
+                    "visible_when": [{"param": "release_type", "in": ["POLYGON"]}],
+                }
+            },
+            "outputs": {"g": {"kind": "raster"}},
+        }
+    )
+    layer = QgsVectorLayer("Polygon?crs=EPSG:2056", "zones", "memory")
+    assert layer.isValid()
+    QgsProject.instance().addMapLayer(layer)
+
+    state = StudyState()
+    state.set_manifest(m)
+    state.param_values["release_type"] = "POLYGON"
+    state.input_layers["zones"] = layer.id()
+    page = RunPage(state)
+
+    # committed, not in edit mode -> allowed
+    assert page._inputs_being_edited(m) == []
+    # in edit mode -> blocked
+    layer.startEditing()
+    assert page._inputs_being_edited(m) == ["zones"]
+    # leaving edit mode clears it again
+    layer.rollBack()
+    assert page._inputs_being_edited(m) == []
+    # and when the input is not shown (RECTANGLE), an edited layer does not block the run
+    layer.startEditing()
+    state.param_values["release_type"] = "RECTANGLE"
+    assert page._inputs_being_edited(m) == []
+    layer.rollBack()
+
+
 def test_build_runspec_requires_output_folder(qgis_app: QgsApplication, toy_manifest) -> None:
     state = StudyState()
     state.set_manifest(toy_manifest)

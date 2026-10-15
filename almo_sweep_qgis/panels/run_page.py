@@ -107,6 +107,17 @@ class RunPage(QWidget):
             if missing_inputs:
                 self._set_status("Select the required input(s): " + ", ".join(missing_inputs))
                 return
+            being_edited = self._inputs_being_edited(manifest)
+            if being_edited:
+                # The run reads each layer's file on disk, not its in-memory edit buffer, so an
+                # input left in edit mode (or with unsaved edits) would simulate geometry that no
+                # longer matches the screen. Block until the user commits and leaves edit mode.
+                self._set_status(
+                    "Finish editing and save the layer(s) before running — they have open edits "
+                    "that are not on disk yet, so the run would use the old geometry: "
+                    + ", ".join(being_edited)
+                )
+                return
         try:
             runspec = self._build_runspec()
         except Exception as exc:
@@ -141,6 +152,27 @@ class RunPage(QWidget):
             if required_now and not self._state.input_layers.get(name):
                 missing.append(spec.display_label)
         return missing
+
+    def _inputs_being_edited(self, manifest: Any) -> list[str]:
+        """Labels of currently-visible input layers that have uncommitted edits.
+
+        A vector layer in edit mode, or with an unsaved edit buffer, differs from its file on
+        disk — and the engine reads the file. Such a layer must be committed and closed before a
+        run so the simulation uses the geometry shown on the canvas.
+        """
+        values = self._state.param_values
+        project = QgsProject.instance()
+        editing: list[str] = []
+        for name, spec in manifest.inputs.items():
+            if not spec.is_visible(values):
+                continue
+            layer_id = self._state.input_layers.get(name)
+            if not layer_id:
+                continue
+            layer = project.mapLayer(layer_id)
+            if isinstance(layer, QgsVectorLayer) and (layer.isEditable() or layer.isModified()):
+                editing.append(spec.display_label)
+        return editing
 
     def _build_runspec(self) -> Any:
         manifest = self._state.manifest
