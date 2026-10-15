@@ -180,6 +180,7 @@ class RunPage(QWidget):
             raise ValueError("no model selected")
 
         inputs: dict[str, str] = {}
+        input_crs: dict[str, str] = {}
         project = QgsProject.instance()
         for name, layer_id in self._state.input_layers.items():
             if not layer_id:
@@ -187,6 +188,12 @@ class RunPage(QWidget):
             layer = project.mapLayer(layer_id)
             if layer is not None:
                 inputs[name] = layer.source()
+                # Capture the layer's CRS so the model can georeference its outputs. An ESRI ASCII
+                # DEM carries no CRS inline, so this is the only reliable source. Prefer the compact
+                # authority id (e.g. "EPSG:2056"); fall back to WKT for a custom CRS.
+                crs = layer.crs()
+                if crs is not None and crs.isValid():
+                    input_crs[name] = crs.authid() or crs.toWkt()
 
         # Edited values from the Parameters page; resolve_runspec fills any gaps with
         # manifest defaults, so this works even if that page was never opened.
@@ -205,6 +212,7 @@ class RunPage(QWidget):
             params=params,
             output_dir=output_dir,
             store_outputs=self._selected_outputs(),
+            input_crs=input_crs,
         )
 
     # -- output selection --------------------------------------------------------------
