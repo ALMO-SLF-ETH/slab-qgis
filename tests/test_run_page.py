@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.run_page import RunPage
+from almo_sweep_qgis.panels.run_page import RunPage, _layer_local_path
 from almo_sweep_qgis.panels.run_task import RunTask
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication, QgsProject
@@ -84,6 +84,29 @@ def test_missing_inputs_enforces_visible_conditional_input(qgis_app: QgsApplicat
     # RECTANGLE -> the input is not shown, so it does not block the run
     state.param_values["release_type"] = "RECTANGLE"
     assert page._missing_inputs(m) == []
+
+
+def test_layer_local_path_detects_unsaved_layers(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    pytest.importorskip("osgeo")
+    from qgis.core import QgsVectorLayer
+
+    # A memory (scratch) layer has no file on disk.
+    mem = QgsVectorLayer("Polygon?crs=EPSG:2056", "scratch", "memory")
+    assert mem.isValid()
+    assert _layer_local_path(mem) is None
+
+    # A raster loaded from a real file resolves to that absolute path.
+    tif = str(tmp_path / "dem.tif")
+    _write_raster(tif, [1.0])
+    from qgis.core import QgsRasterLayer
+
+    rlayer = QgsRasterLayer(tif, "dem")
+    assert rlayer.isValid()
+    assert _layer_local_path(rlayer) == tif
+
+    # A bare relative filename (as in the reported failure) is not a usable local path.
+    bare = QgsRasterLayer("dem_blatten_2m.tif", "bare")
+    assert _layer_local_path(bare) is None
 
 
 def test_inputs_being_edited_blocks_uncommitted_layer(qgis_app: QgsApplication) -> None:

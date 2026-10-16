@@ -15,13 +15,18 @@ from typing import Any
 
 from qgis.core import (
     QgsApplication,
+    QgsCoordinateTransformContext,
+    QgsDataProvider,
     QgsDateTimeRange,
     QgsGradientColorRamp,
     QgsProject,
+    QgsRasterFileWriter,
     QgsRasterLayer,
     QgsRasterLayerTemporalProperties,
+    QgsRasterPipe,
     QgsSingleBandPseudoColorRenderer,
     QgsStyle,
+    QgsVectorFileWriter,
     QgsVectorLayer,
 )
 from qgis.gui import QgsFileWidget
@@ -29,6 +34,7 @@ from qgis.PyQt.QtCore import QDate, QDateTime, QTime
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QLabel,
@@ -118,6 +124,10 @@ class RunPage(QWidget):
                     + ", ".join(being_edited)
                 )
                 return
+            # The model reads each input from a file path, so any input that is only a temporary /
+            # in-memory / project-embedded layer (no file on disk) must be saved first.
+            if not self._ensure_inputs_saved(manifest):
+                return
         try:
             runspec = self._build_runspec()
         except Exception as exc:
@@ -173,6 +183,65 @@ class RunPage(QWidget):
             if isinstance(layer, QgsVectorLayer) and (layer.isEditable() or layer.isModified()):
                 editing.append(spec.display_label)
         return editing
+
+    def _ensure_inputs_saved(self, manifest: Any) -> bool:
+        """Make sure every visible input layer is backed by a file on disk before running.
+
+        A layer that is only in memory, temporary, or embedded in the project with no real file
+        path (so the model process cannot open it) is offered a "save to disk" dialog; the layer is
+        exported and re-pointed at that file. Returns True when all inputs are on disk, False if the
+        user cancelled saving one (the run is then aborted).
+        """
+        values = self._state.param_values
+        project = QgsProject.instance()
+        for name, spec in manifest.inputs.items():
+            if not spec.is_visible(values):
+                continue
+            layer_id = self._state.input_layers.get(name)
+            if not layer_id:
+                continue
+            layer = project.mapLayer(layer_id)
+            if layer is None or _layer_local_path(layer) is not None:
+                continue  # not selected, or already a file on disk
+            if not self._prompt_and_save_layer(spec.display_label, layer):
+                self._set_status(
+                    f"Run cancelled: the input '{spec.display_label}' is not saved to disk yet. "
+                    "Save it (or pick a file-based layer) and run again."
+                )
+                return False
+        return True
+
+    def _prompt_and_save_layer(self, label: str, layer: Any) -> bool:
+        """Ask where to save ``layer``, export it, and re-point it. False if the user cancelled."""
+        is_raster = isinstance(layer, QgsRasterLayer)
+        suggested = self._suggested_save_path(layer, is_raster)
+        if is_raster:
+            path, _ = QFileDialog.getSaveFileName(
+                self, f"Save '{label}' to disk (not stored yet)", suggested, "GeoTIFF (*.tif)"
+            )
+        else:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                f"Save '{label}' to disk (not stored yet)",
+                suggested,
+                "GeoPackage (*.gpkg);;Shapefile (*.shp)",
+            )
+        if not path:
+            return False
+        try:
+            saved = _save_raster(layer, path) if is_raster else _save_vector(layer, path)
+        except Exception as exc:
+            self._set_status(f"Could not save '{label}': {exc}")
+            return False
+        # Re-point the layer at the new file so the run (and future runs) read it from disk.
+        provider = "gdal" if is_raster else "ogr"
+        layer.setDataSource(saved, layer.name(), provider, QgsDataProvider.ProviderOptions())
+        return True
+
+    def _suggested_save_path(self, layer: Any, is_raster: bool) -> str:
+        base = self._out_dir.filePath().strip() or os.path.expanduser("~")
+        name = "".join(c if c.isalnum() or c in "-_." else "_" for c in layer.name()) or "layer"
+        return os.path.join(base, name + (".tif" if is_raster else ".gpkg"))
 
     def _build_runspec(self) -> Any:
         manifest = self._state.manifest
@@ -399,3 +468,51 @@ class RunPage(QWidget):
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
+
+
+def _layer_local_path(layer: Any) -> str | None:
+    """The existing absolute file backing ``layer``, or None if it is not saved locally.
+
+    Only plain GDAL/OGR file sources count. Memory/temporary layers, remote providers (WMS/WFS/
+    vsicurl, …) and relative/bare paths (e.g. a project-embedded ``dem.tif`` with no directory)
+    all return None, so the caller knows to save them to a real file before running.
+    """
+    with contextlib.suppress(Exception):
+        if layer.isTemporary():
+            return None
+    if layer.providerType() not in ("gdal", "ogr"):
+        return None
+    # OGR appends "|layername=…"/"|layerid=…"; the file is the part before the first '|'.
+    path = layer.source().split("|", 1)[0].strip()
+    if os.path.isabs(path) and os.path.exists(path):
+        return path
+    return None
+
+
+def _save_raster(layer: QgsRasterLayer, path: str) -> str:
+    """Write ``layer`` to a GeoTIFF at ``path`` and return the path."""
+    provider = layer.dataProvider()
+    writer = QgsRasterFileWriter(path)
+    writer.setOutputFormat("GTiff")
+    pipe = QgsRasterPipe()
+    if not pipe.set(provider.clone()):
+        raise RuntimeError("could not build the raster pipe")
+    err = writer.writeRaster(
+        pipe, provider.xSize(), provider.ySize(), provider.extent(), layer.crs()
+    )
+    if err != QgsRasterFileWriter.WriterError.NoError:
+        raise RuntimeError(f"raster writer error ({err})")
+    return path
+
+
+def _save_vector(layer: QgsVectorLayer, path: str) -> str:
+    """Write ``layer`` to ``path`` (format from extension) and return the written path."""
+    options = QgsVectorFileWriter.SaveVectorOptions()
+    options.driverName = "ESRI Shapefile" if path.lower().endswith(".shp") else "GPKG"
+    result = QgsVectorFileWriter.writeAsVectorFormatV3(
+        layer, path, QgsCoordinateTransformContext(), options
+    )
+    # writeAsVectorFormatV3 -> (errorCode, errorMessage, newFilename?, newLayer?)
+    if result[0] != QgsVectorFileWriter.WriterError.NoError:
+        raise RuntimeError(result[1] or f"vector writer error ({result[0]})")
+    return path
