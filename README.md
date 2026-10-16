@@ -105,6 +105,16 @@ toolbar button appears; click it to show the **ALMO Sweep** dock panel.
 
 ## Use
 
+### Download a DEM for a region (optional)
+
+If you don't already have a DEM, the panel header has **Download DEM for region…**. Pick a
+provider (currently **swissALTI3D** from swisstopo, 0.5 m or 2 m), a **polygon layer** outlining
+your region of interest, and an output file; the covering tiles are fetched and **merged into one
+clipped GeoTIFF** (in the background), then added to the map ready to use as the DEM input. Tiles
+are listed live from the provider's STAC API, so the current data is always used. Adding another
+provider is a single class in `almo_sweep_qgis/dem/providers.py` — it then appears in the dropdown
+automatically. (The region polygon layer must be in a CRS with an EPSG code, e.g. EPSG:2056.)
+
 ### 6. Register and select a model
 
 The panel header holds a **persistent list of models**. The first time, click **Add…** and
