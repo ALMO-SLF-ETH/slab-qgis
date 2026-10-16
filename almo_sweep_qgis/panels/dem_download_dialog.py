@@ -14,6 +14,7 @@ from typing import Any
 
 from qgis.core import (
     QgsApplication,
+    QgsBilinearRasterResampler,
     QgsCoordinateReferenceSystem,
     QgsGeometry,
     QgsHillshadeRenderer,
@@ -288,9 +289,17 @@ class _DemDownloadTask(QgsTask):
 
 
 def _apply_hillshade(layer: QgsRasterLayer) -> None:
-    """Render a DEM raster as a shaded relief (band 1, light from NW at 45°)."""
+    """Render a DEM raster as a shaded relief, with bilinear (2x2) display resampling.
+
+    Bilinear resampling when zoomed in *and* out smooths the shaded relief instead of showing
+    blocky nearest-neighbour pixels (the QGIS default).
+    """
     renderer = QgsHillshadeRenderer(layer.dataProvider(), 1, 315.0, 45.0)
     layer.setRenderer(renderer)
+    resampler = layer.resampleFilter()
+    if resampler is not None:
+        resampler.setZoomedInResampler(QgsBilinearRasterResampler())
+        resampler.setZoomedOutResampler(QgsBilinearRasterResampler())
     layer.triggerRepaint()
 
 
