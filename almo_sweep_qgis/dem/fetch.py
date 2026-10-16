@@ -34,18 +34,25 @@ def fetch_dem(
     provider: DemProvider,
     polygon_wkt: str,
     polygon_crs_epsg: int,
-    resolution: float,
+    source_resolution: float,
     out_path: str,
     *,
+    output_resolution: float | None = None,
+    resample_alg: str = "bilinear",
     clip: bool = True,
     progress: ProgressCb | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> str:
-    """Build a merged GeoTIFF of ``provider``'s tiles covering ``polygon_wkt`` at ``resolution``.
+    """Build a merged GeoTIFF of ``provider``'s tiles covering ``polygon_wkt``.
 
-    ``polygon_wkt`` is the region of interest in EPSG:``polygon_crs_epsg``. With ``clip`` the output
-    is cut to the polygon (``cropToCutline``); otherwise it covers the polygon's bounding box. The
-    output is in the provider's native CRS. Returns ``out_path``. Raises :class:`DemFetchError`.
+    ``source_resolution`` selects which tiles to fetch (the provider's native assets, e.g. 0.5 m or
+    2 m). ``output_resolution`` is the grid the result is written at: when given (and different from
+    the source), the output is resampled to it with ``resample_alg`` (a GDAL algorithm such as
+    ``"bilinear"`` -- a 2x2 kernel -- ``"average"`` or ``"cubic"``); when omitted, the source
+    resolution is kept as-is. ``polygon_wkt`` is the region of interest in
+    EPSG:``polygon_crs_epsg``; with ``clip`` the output is cut to the polygon, otherwise to its
+    bounding box. The output is in
+    the provider's native CRS. Returns ``out_path``. Raises :class:`DemFetchError`.
     """
     gdal, ogr, osr = _osgeo()
 
@@ -60,8 +67,11 @@ def fetch_dem(
     gdal.SetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif")
 
     report(0.02, "Querying provider for tiles…")
+    out_res = (
+        output_resolution if output_resolution and output_resolution > 0 else source_resolution
+    )
     min_lon, min_lat, max_lon, max_lat = _bbox_wgs84(polygon_wkt, polygon_crs_epsg, ogr, osr)
-    tiles = provider.tiles_for_bbox(min_lon, min_lat, max_lon, max_lat, resolution)
+    tiles = provider.tiles_for_bbox(min_lon, min_lat, max_lon, max_lat, source_resolution)
     if not tiles:
         raise DemFetchError(
             "No DEM tiles from this provider cover the selected region at this resolution."
@@ -85,9 +95,9 @@ def fetch_dem(
     warp_opts = dict(
         format="GTiff",
         dstSRS=f"EPSG:{provider.crs_epsg}",
-        xRes=resolution,
-        yRes=resolution,
-        resampleAlg="bilinear",
+        xRes=out_res,
+        yRes=out_res,
+        resampleAlg=resample_alg,
         creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=3", "TILED=YES", "BIGTIFF=IF_SAFER"],
         multithread=True,
         callback=_gdal_cb,

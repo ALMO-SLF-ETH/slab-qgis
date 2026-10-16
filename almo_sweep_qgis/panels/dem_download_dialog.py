@@ -1,9 +1,10 @@
 """Dialog to download and merge a DEM for a region polygon, from an online provider.
 
-The user picks a provider (e.g. swissALTI3D), a resolution, a polygon layer that outlines the
-region of interest, and an output file. The tiles covering the region are mosaicked and clipped
-into one GeoTIFF (in a background task), which is then added to the project and can be used as the
-DEM input. New providers appear here automatically once registered in
+The user picks a provider (e.g. swissALTI3D), the source tile resolution, a polygon layer that
+outlines the region of interest, and an output file; optionally the output can be resampled to a
+different resolution with a chosen method. The covering tiles are mosaicked and clipped into one
+GeoTIFF (in a background task), which is then added to the project (rendered as a hillshade) ready
+to use as the DEM input. New providers appear here automatically once registered in
 :mod:`almo_sweep_qgis.dem.providers`.
 """
 
@@ -15,6 +16,7 @@ from qgis.core import (
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsGeometry,
+    QgsHillshadeRenderer,
     QgsMapLayerProxyModel,
     QgsProject,
     QgsRasterLayer,
@@ -27,7 +29,9 @@ from qgis.PyQt.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
@@ -37,14 +41,25 @@ from qgis.PyQt.QtWidgets import (
 
 from almo_sweep_qgis.dem import fetch, providers
 
+#: Resampling methods offered when resampling to a custom resolution: (label, GDAL algorithm).
+#: Bilinear (a 2x2-pixel kernel) is the default; "average" is usually better for downsampling.
+_RESAMPLE_METHODS = (
+    ("Bilinear (2x2 kernel)", "bilinear"),
+    ("Nearest neighbour", "near"),
+    ("Cubic (4x4 kernel)", "cubic"),
+    ("Cubic spline", "cubicspline"),
+    ("Lanczos", "lanczos"),
+    ("Average (mean of covered cells; for downsampling)", "average"),
+)
+
 
 class DemDownloadDialog(QDialog):
-    """Pick a provider + region polygon, then fetch and merge a DEM GeoTIFF."""
+    """Pick a provider + region, then fetch, merge (and optionally resample) a DEM GeoTIFF."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Download DEM for a region")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
         self._task: QgsTask | None = None
         self._out_path: str = ""
 
@@ -57,12 +72,33 @@ class DemDownloadDialog(QDialog):
         form.addRow("Provider:", self._provider_combo)
 
         self._resolution_combo = QComboBox()
-        form.addRow("Resolution:", self._resolution_combo)
+        self._resolution_combo.setToolTip("Which native tiles to fetch")
+        self._resolution_combo.currentIndexChanged.connect(self._sync_resample_default)
+        form.addRow("Source (tile) resolution:", self._resolution_combo)
 
         self._region_combo = QgsMapLayerComboBox()
         self._region_combo.setFilters(QgsMapLayerProxyModel.Filter.PolygonLayer)
         self._region_combo.setToolTip("A polygon layer outlining the region of interest")
         form.addRow("Region (polygon):", self._region_combo)
+
+        # Optional resampling to a different output resolution.
+        self._resample_check = QCheckBox("Resample output to")
+        self._resample_check.toggled.connect(self._on_resample_toggled)
+        self._resample_res = QDoubleSpinBox()
+        self._resample_res.setDecimals(2)
+        self._resample_res.setRange(0.01, 10000.0)
+        self._resample_res.setSingleStep(0.5)
+        self._resample_res.setSuffix(" m")
+        self._resample_res.setEnabled(False)
+        self._resample_method = QComboBox()
+        for label, alg in _RESAMPLE_METHODS:
+            self._resample_method.addItem(label, alg)
+        self._resample_method.setEnabled(False)
+        resample_row = QHBoxLayout()
+        resample_row.addWidget(self._resample_check, 0)
+        resample_row.addWidget(self._resample_res, 0)
+        resample_row.addWidget(self._resample_method, 1)
+        form.addRow("Resampling:", resample_row)
 
         self._clip_check = QCheckBox("Clip output to the polygon (otherwise its bounding box)")
         self._clip_check.setChecked(True)
@@ -102,8 +138,20 @@ class DemDownloadDialog(QDialog):
         self._resolution_combo.clear()
         prov = providers.get_provider(self._provider_combo.currentData())
         for res in prov.resolutions:
-            # Show "0.5 m" but keep the float as the item data.
-            self._resolution_combo.addItem(f"{res:g} m", res)
+            self._resolution_combo.addItem(f"{res:g} m", res)  # label shown, float kept as data
+        self._sync_resample_default()
+
+    def _sync_resample_default(self) -> None:
+        # Keep the resample box seeded with the source resolution until the user takes it over.
+        if (
+            not self._resample_check.isChecked()
+            and self._resolution_combo.currentData() is not None
+        ):
+            self._resample_res.setValue(float(self._resolution_combo.currentData()))
+
+    def _on_resample_toggled(self, on: bool) -> None:
+        self._resample_res.setEnabled(on)
+        self._resample_method.setEnabled(on)
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
@@ -147,14 +195,24 @@ class DemDownloadDialog(QDialog):
 
         wkt, epsg = region
         provider = providers.get_provider(self._provider_combo.currentData())
-        resolution = float(self._resolution_combo.currentData())
+        source_res = float(self._resolution_combo.currentData())
+        output_res = float(self._resample_res.value()) if self._resample_check.isChecked() else None
+        resample_alg = str(self._resample_method.currentData())
 
         self._progress.setValue(0)
         self._download_button.setEnabled(False)
-        self._set_status(f"Fetching {provider.label} at {resolution:g} m…")
+        detail = f" → resample to {output_res:g} m ({resample_alg})" if output_res else ""
+        self._set_status(f"Fetching {provider.label} at {source_res:g} m{detail}…")
 
         task = _DemDownloadTask(
-            provider, wkt, epsg, resolution, out_path, self._clip_check.isChecked()
+            provider,
+            wkt,
+            epsg,
+            source_res,
+            out_path,
+            self._clip_check.isChecked(),
+            output_res,
+            resample_alg,
         )
         task.progressChanged.connect(lambda pct: self._progress.setValue(int(pct)))
         task.taskCompleted.connect(self._on_completed)
@@ -169,8 +227,11 @@ class DemDownloadDialog(QDialog):
         self._task = None
         layer = QgsRasterLayer(self._out_path, _layer_name(self._out_path))
         if layer.isValid():
+            _apply_hillshade(layer)
             QgsProject.instance().addMapLayer(layer)
-            self._set_status(f"Done — merged DEM saved to {self._out_path} and added to the map.")
+            self._set_status(
+                f"Done — merged DEM saved to {self._out_path}, added to the map as a hillshade."
+            )
         else:
             self._set_status(f"Saved to {self._out_path}, but it could not be loaded as a layer.")
 
@@ -189,17 +250,21 @@ class _DemDownloadTask(QgsTask):
         provider: Any,
         polygon_wkt: str,
         polygon_crs_epsg: int,
-        resolution: float,
+        source_resolution: float,
         out_path: str,
         clip: bool,
+        output_resolution: float | None,
+        resample_alg: str,
     ) -> None:
         super().__init__("Download DEM", QgsTask.Flag.CanCancel)
         self._provider = provider
         self._wkt = polygon_wkt
         self._epsg = polygon_crs_epsg
-        self._resolution = resolution
+        self._source_resolution = source_resolution
         self._out_path = out_path
         self._clip = clip
+        self._output_resolution = output_resolution
+        self._resample_alg = resample_alg
         self.error_message: str | None = None
 
     def run(self) -> bool:
@@ -208,8 +273,10 @@ class _DemDownloadTask(QgsTask):
                 self._provider,
                 self._wkt,
                 self._epsg,
-                self._resolution,
+                self._source_resolution,
                 self._out_path,
+                output_resolution=self._output_resolution,
+                resample_alg=self._resample_alg,
                 clip=self._clip,
                 progress=lambda frac, _msg: self.setProgress(max(0.0, min(1.0, frac)) * 100.0),
                 should_cancel=self.isCanceled,
@@ -218,6 +285,13 @@ class _DemDownloadTask(QgsTask):
             self.error_message = str(exc)
             return False
         return True
+
+
+def _apply_hillshade(layer: QgsRasterLayer) -> None:
+    """Render a DEM raster as a shaded relief (band 1, light from NW at 45°)."""
+    renderer = QgsHillshadeRenderer(layer.dataProvider(), 1, 315.0, 45.0)
+    layer.setRenderer(renderer)
+    layer.triggerRepaint()
 
 
 def _epsg_of(crs: QgsCoordinateReferenceSystem) -> int | None:
