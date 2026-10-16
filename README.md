@@ -149,17 +149,19 @@ no launching QGIS from a terminal.
    `ELLIPSE` releases are defined numerically instead. For dampm the DEM must be an ESRI ASCII
    `.asc` and the release a polygon shapefile; load them into QGIS first.
 2. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
-   Progress shows in the panel and in QGIS's task bar; on success the output raster(s) are
-   added to your project. Each run's `runspec.json`, `simConfig.json` and `result.json` are
-   written into the output folder for provenance.
+   Progress shows in the panel and in QGIS's task bar. If any chosen input layer isn't saved to
+   disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,
+   since the model reads inputs from files. Each run's `runspec.json`, `simConfig.json` and
+   `result.json` are written into the output folder for provenance.
 
-   A directory output that holds a **series of raster frames** (e.g. dampm's `grid_series`) is
-   loaded as **temporal groups** — one per band: **flow height (band 1)** and **velocity
-   (band 2)**. Each frame is one timestamp (spaced by the model's output interval) and is
-   rendered single-band pseudocolor with the **Turbo** ramp; the colour upper bound per band is
-   taken from `max_values.tif` (the per-cell maxima over the whole run), so colours are
-   consistent across frames and equal to the run's true maximum. Open **View ▸ Panels ▸
-   Temporal Controller** in animation mode to step/play through the frames in time.
+   On success, **all of a run's outputs are added under one layer group named after the run**:
+   - **Multi-band rasters** (`final_grid`, `max_values`) are **unpacked into one single-band layer
+     per band**, each in its own subgroup, rendered **single-band pseudocolor (Turbo)**.
+   - A **series of raster frames** (`grid_series`) is loaded as **temporal groups** — one per band
+     (**flow height**, **velocity**). Each frame is a timestamp (spaced by the model's output
+     interval); the colour upper bound per band comes from `max_values.tif` (the run maxima), so
+     colours are consistent across frames. Open **View ▸ Panels ▸ Temporal Controller** in
+     animation mode to step/play through them.
 
 ---
 

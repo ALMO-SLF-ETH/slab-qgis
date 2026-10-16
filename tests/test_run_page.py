@@ -212,6 +212,28 @@ def test_load_results_adds_raster_layer(
     assert len(QgsProject.instance().mapLayers()) == before + 1
 
 
+def test_load_results_unpacks_bands_into_one_group(
+    qgis_app: QgsApplication, toy_manifest, tmp_path: Path
+) -> None:
+    pytest.importorskip("osgeo")
+    from almo_sweep.contracts import RunResult
+
+    grid = str(tmp_path / "final_grid.tif")
+    _write_raster(grid, [1.0, 2.0, 3.0])  # 3-band raster -> 3 single-band layers
+
+    state = StudyState()
+    state.set_manifest(toy_manifest)
+    page = RunPage(state)
+
+    loaded = page._load_results(RunResult.success("runX", {"grid": grid}))
+    assert loaded == 3  # one layer per band
+    root = QgsProject.instance().layerTreeRoot()
+    run_group = root.findGroup("runX")
+    assert run_group is not None  # all outputs grouped under the run
+    assert run_group.findGroup("grid") is not None  # bands grouped under the output name
+    assert len(run_group.findGroup("grid").findLayers()) == 3
+
+
 def _write_raster(path: str, bands: list[float]) -> None:
     import numpy as np
     from osgeo import gdal, osr
@@ -245,9 +267,12 @@ def test_frame_series_loads_two_turbo_temporal_groups(
     state.param_values["output_dt"] = 5.0  # frame spacing in seconds
     page = RunPage(state)
 
-    n = page._load_frame_series("grid_series", str(frames), "run1", str(max_values))
+    run_group = QgsProject.instance().layerTreeRoot().insertGroup(0, "run1")
+    n = page._load_frame_series("grid_series", str(frames), str(max_values), run_group)
     assert n == 6  # 3 frames x 2 bands (h + v)
     assert page._loaded_frame_series is True
+    # the frames live under run1 > grid_series > <band> subgroups
+    assert run_group.findGroup("grid_series") is not None
 
     temporal = [
         lyr for lyr in QgsProject.instance().mapLayers().values() if lyr.name().startswith("t = ")
