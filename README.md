@@ -7,6 +7,16 @@ simulations, and load the results back onto the map — all from the QGIS canvas
 The plugin is **model-agnostic**: it drives any model that ships an ALMO *manifest*
 (`model.toml`). This guide uses the [dampm](../dampm) model as the example.
 
+## How the stack fits together
+
+![ALMO stack — how the GUI, the engine and dampm fit together](docs/stack_architecture.svg)
+
+Three repos, decoupled by a small **file contract** rather than code dependencies: this
+**plugin** (the only part that imports `qgis`) drives the **[almo-sweep](../almo-sweep)** engine
+(pure Python, model-agnostic), which runs any **model** that ships a `model.toml` manifest plus an
+executable entry point. [dampm](../dampm) provides both via its `dampm_interface/` adapter, so the
+GUI and the engine contain no dampm-specific code.
+
 ---
 
 ## Requirements
