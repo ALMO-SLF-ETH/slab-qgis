@@ -162,7 +162,9 @@ no launching QGIS from a terminal.
    Progress shows in the panel and in QGIS's task bar. If any chosen input layer isn't saved to
    disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,
    since the model reads inputs from files. Each run's `runspec.json`, `simConfig.json` and
-   `result.json` are written into the output folder for provenance.
+   `result.json` are written into the output folder for provenance. **Stop** cancels every running
+   simulation — it terminates the model process itself (not just the task wrapper), so a run stops
+   immediately rather than finishing in the background.
 
    On success, **all of a run's outputs are added under one layer group named after the run**:
    - **Multi-band rasters** (`final_grid`, `max_values`) are **unpacked into one single-band layer

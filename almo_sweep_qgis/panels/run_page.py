@@ -38,6 +38,7 @@ from qgis.PyQt.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -82,9 +83,16 @@ class RunPage(QWidget):
         state.manifestChanged.connect(self._rebuild_outputs)
         self._rebuild_outputs(state.manifest)
 
+        buttons = QHBoxLayout()
         self._run_button = QPushButton("Run")
         self._run_button.clicked.connect(self._on_run_clicked)
-        root.addWidget(self._run_button)
+        buttons.addWidget(self._run_button)
+        self._stop_button = QPushButton("Stop")
+        self._stop_button.setToolTip("Terminate all running simulations")
+        self._stop_button.setEnabled(False)
+        self._stop_button.clicked.connect(self._on_stop_clicked)
+        buttons.addWidget(self._stop_button)
+        root.addLayout(buttons)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -137,6 +145,7 @@ class RunPage(QWidget):
 
         self._progress.setValue(0)
         self._run_button.setEnabled(False)
+        self._stop_button.setEnabled(True)
         self._set_status(f"Running '{runspec.run_id}' …")
 
         task = RunTask(self._state.manifest, runspec)
@@ -145,6 +154,38 @@ class RunPage(QWidget):
         task.taskTerminated.connect(self._on_terminated)
         self._task = task
         QgsApplication.taskManager().addTask(task)
+
+    # -- stop --------------------------------------------------------------------------
+    def _on_stop_clicked(self) -> None:
+        """Cancel every running simulation; each cancel kills its model subprocess.
+
+        Cancelling a :class:`RunTask` sets its ``isCanceled`` flag, which the engine polls and
+        acts on by terminating the model process — so the run actually stops rather than finishing
+        in the background. The task's ``taskTerminated`` signal then updates the UI.
+        """
+        tasks = self._running_tasks()
+        if not tasks:
+            self._stop_button.setEnabled(False)
+            self._set_status("No simulation is running.")
+            return
+        self._stop_button.setEnabled(False)  # one stop is enough; avoid repeat clicks
+        self._set_status(
+            f"Stopping {len(tasks)} running simulation(s) — terminating the model process…"
+        )
+        for task in tasks:
+            with contextlib.suppress(Exception):
+                task.cancel()
+
+    def _running_tasks(self) -> list[RunTask]:
+        """All active ALMO run tasks (this page's run plus any other RunTask the manager holds)."""
+        tasks: list[RunTask] = []
+        with contextlib.suppress(Exception):
+            for task in QgsApplication.taskManager().tasks():
+                if isinstance(task, RunTask) and task not in tasks:
+                    tasks.append(task)
+        if self._task is not None and self._task not in tasks:
+            tasks.append(self._task)
+        return tasks
 
     def _missing_inputs(self, manifest: Any) -> list[str]:
         """Inputs that must be chosen for the current configuration but are not.
@@ -312,6 +353,7 @@ class RunPage(QWidget):
     # -- completion (main thread) ------------------------------------------------------
     def _on_completed(self) -> None:
         self._run_button.setEnabled(True)
+        self._stop_button.setEnabled(False)
         result = self._task.result if self._task is not None else None
         self._task = None
         if result is None:
@@ -335,9 +377,16 @@ class RunPage(QWidget):
 
     def _on_terminated(self) -> None:
         self._run_button.setEnabled(True)
+        self._stop_button.setEnabled(False)
+        was_cancelled = self._task is not None and self._task.isCanceled()
         message = self._task.error_message if self._task is not None else None
         self._task = None
-        self._set_status(f"Run could not execute: {message or 'terminated'}")
+        if was_cancelled:
+            # User pressed Stop: the model process was killed. Not a failure — just stopped.
+            self._progress.setValue(0)
+            self._set_status("Run stopped.")
+        else:
+            self._set_status(f"Run could not execute: {message or 'terminated'}")
 
     def _load_results(self, result: Any) -> int:
         """Load a run's outputs into one layer-tree group named after the run.

@@ -40,11 +40,15 @@ class RunTask(QgsTask):
                 on_progress=self._on_progress,
                 substitutions={"python": _qgis_python()},
                 env=env,
+                # Let a Stop button (which cancels this task) actually kill the model process.
+                cancel_check=self.isCanceled,
             )
         except Exception as exc:
             self.error_message = str(exc)
             return False
-        return True
+        # A cancelled run reports as terminated (taskTerminated), not completed, even though the
+        # engine returned a result — so the UI treats it as "stopped", not "finished/failed".
+        return not self.isCanceled()
 
     def _on_progress(self, event: Any) -> None:
         self.setProgress(float(event.progress) * 100.0)

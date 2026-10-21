@@ -185,6 +185,55 @@ def test_run_executes_toy_model(qgis_app: QgsApplication, toy_manifest, tmp_path
     assert "grid" in task.result.outputs
 
 
+def test_stop_button_disabled_until_run_and_noops_when_idle(
+    qgis_app: QgsApplication, toy_manifest
+) -> None:
+    state = StudyState()
+    state.set_manifest(toy_manifest)
+    page = RunPage(state)
+    # No run in flight: Stop is disabled, and clicking it just reports that nothing is running.
+    assert page._stop_button.isEnabled() is False
+    page._on_stop_clicked()
+    assert "No simulation is running" in page._status.text()
+
+
+def test_stop_cancels_running_task_and_kills_process(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    # A cancelled RunTask must kill the model subprocess and report as terminated (run() -> False)
+    # with a "cancelled" result, rather than waiting out the model's long sleep.
+    import time
+
+    from almo_sweep.contracts import RunSpec, parse_manifest
+
+    manifest = parse_manifest(
+        {
+            "model": {"name": "toy", "version": "0.1.0"},
+            "invocation": {
+                "command": [sys.executable, str(_TOY)],
+                "args_template": ["--runspec", "{runspec}"],
+            },
+            "outputs": {"grid": {"kind": "raster"}},
+        }
+    )
+    spec = RunSpec(
+        run_id="run",
+        model_name="toy",
+        params={"mode": "sleep"},
+        inputs={},
+        output_dir=str(tmp_path / "run"),
+        store_outputs=("grid",),
+    )
+    task = RunTask(manifest, spec)
+    task.cancel()  # pre-cancel: the engine's watcher kills the process immediately
+
+    started = time.monotonic()
+    assert task.run() is False  # cancelled -> taskTerminated, not completed
+    assert time.monotonic() - started < 5.0  # did not wait out the 30s sleep
+    assert task.result is not None and not task.result.ok
+    assert "cancelled" in (task.result.error or "")
+
+
 def test_load_results_adds_raster_layer(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
