@@ -174,11 +174,15 @@ no launching QGIS from a terminal.
      raster, the summed per-cell depths × cell area. It refreshes automatically as you edit the
      release polygon — live while drawing/moving vertices and again on commit/save.
 2. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
-   Progress shows in the panel and in QGIS's task bar. If any chosen input layer isn't saved to
+   The run executes as a background **pipeline** of steps — any armed DEM resamples first, then
+   the simulation(s). The progress bar and the line beneath it describe the **whole batch**: the
+   current phase (e.g. *Resampling 'dem' to 2 m* or *Running 'run_001'*), elapsed time, an
+   estimated time remaining and finish clock time, and — once sweeps run many simulations — a
+   `step N/M` counter and a batch-wide finish estimate. If any chosen input layer isn't saved to
    disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,
    since the model reads inputs from files. Each run's `runspec.json`, `simConfig.json` and
-   `result.json` are written into the output folder for provenance. **Stop** cancels every running
-   simulation — it terminates the model process itself (not just the task wrapper), so a run stops
+   `result.json` are written into the output folder for provenance. **Stop** cancels the running
+   step — it terminates the model process itself (not just the task wrapper), so a run stops
    immediately rather than finishing in the background.
 
    On success, **all of a run's outputs are added under one layer group named after the run**:

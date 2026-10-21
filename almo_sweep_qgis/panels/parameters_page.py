@@ -30,7 +30,6 @@ from qgis.core import (
     QgsMapLayer,
     QgsProject,
     QgsRasterLayer,
-    QgsTask,
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapLayerComboBox
@@ -54,12 +53,11 @@ from qgis.PyQt.QtWidgets import (
 from almo_sweep_qgis import estimate
 from almo_sweep_qgis.dem.resample import (
     RESAMPLE_METHODS,
-    ResampleError,
     default_resampled_path,
     raster_resolution,
-    resample_raster,
 )
 from almo_sweep_qgis.dem.style import apply_hillshade
+from almo_sweep_qgis.panels.run_pipeline import ResampleTask
 from almo_sweep_qgis.state import StudyState
 
 # Fallback bounds when the manifest leaves a numeric parameter unbounded.
@@ -529,7 +527,7 @@ class _ResamplePanel(QWidget):
         self._combo = combo
         self._state = state
         self._input_name = input_name
-        self._task: _ResampleTask | None = None
+        self._task: ResampleTask | None = None
         self._out_edited = False
 
         outer = QVBoxLayout(self)
@@ -663,13 +661,13 @@ class _ResamplePanel(QWidget):
 
         self._apply.setEnabled(False)
         self._set_status(f"Resampling to {res:g} m…")
-        task = _ResampleTask(src, dst, res, alg)
+        task = ResampleTask(src, dst, res, alg)
         task.taskCompleted.connect(lambda t=task: self._on_done(t))
         task.taskTerminated.connect(lambda t=task: self._on_done(t))
         self._task = task
         QgsApplication.taskManager().addTask(task)
 
-    def _on_done(self, task: _ResampleTask) -> None:
+    def _on_done(self, task: ResampleTask) -> None:
         self._task = None
         self._update_apply_enabled()
         if task.error is not None:
@@ -697,34 +695,3 @@ class _ResamplePanel(QWidget):
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
-
-
-class _ResampleTask(QgsTask):
-    """Background raster resample (GDAL warp), so the UI stays responsive on large DEMs."""
-
-    def __init__(self, src: str, dst: str, resolution: float, alg: str) -> None:
-        super().__init__("Resample raster", QgsTask.Flag.CanCancel)
-        self._src = src
-        self._dst = dst
-        self._res = resolution
-        self._alg = alg
-        self.out_path: str | None = None
-        self.error: str | None = None
-
-    def run(self) -> bool:
-        try:
-            self.out_path = resample_raster(
-                self._src,
-                self._dst,
-                self._res,
-                self._alg,
-                progress=lambda frac, _msg: self.setProgress(frac * 100.0),
-                should_cancel=self.isCanceled,
-            )
-        except ResampleError as exc:
-            self.error = str(exc)
-            return False
-        except Exception as exc:  # defensive: surface any unexpected GDAL error
-            self.error = str(exc)
-            return False
-        return not self.isCanceled()

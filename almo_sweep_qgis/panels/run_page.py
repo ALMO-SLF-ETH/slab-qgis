@@ -48,13 +48,9 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from almo_sweep_qgis import engine, settings
-from almo_sweep_qgis.dem.resample import (
-    ResampleError,
-    default_resampled_path,
-    raster_resolution,
-    resample_raster,
-)
+from almo_sweep_qgis.dem.resample import default_resampled_path, raster_resolution
 from almo_sweep_qgis.dem.style import apply_hillshade
+from almo_sweep_qgis.panels.run_pipeline import ResampleTask, RunController
 from almo_sweep_qgis.panels.run_task import RunTask
 from almo_sweep_qgis.state import StudyState
 
@@ -66,6 +62,7 @@ class RunPage(QWidget):
         super().__init__(parent)
         self._state = state
         self._task: RunTask | None = None
+        self._controller: RunController | None = None
         self._loaded_frame_series = False
 
         root = QVBoxLayout(self)
@@ -106,6 +103,12 @@ class RunPage(QWidget):
         self._progress.setValue(0)
         root.addWidget(self._progress)
 
+        # Current phase + time estimate, e.g. "Resampling 'dem' to 2 m — 0:05 elapsed · ~0:20 left".
+        self._progress_info = QLabel("")
+        self._progress_info.setWordWrap(True)
+        self._progress_info.setEnabled(False)
+        root.addWidget(self._progress_info)
+
         self._status = QLabel("")
         self._status.setWordWrap(True)
         root.addWidget(self._status)
@@ -144,27 +147,24 @@ class RunPage(QWidget):
             # in-memory / project-embedded layer (no file on disk) must be saved first.
             if not self._ensure_inputs_saved(manifest):
                 return
-            # Apply any raster resample armed on the Parameters page ("Resample to" ticked) but
-            # never applied, so starting the run honours it.
-            if not self._apply_pending_resamples(manifest):
-                return
-        try:
-            runspec = self._build_runspec()
-        except Exception as exc:
-            self._set_status(f"Cannot start run: {exc}")
-            return
+
+        # Build the batch of background steps: any armed raster resamples first, then the run.
+        # (A parameter sweep will later add one run step per sim; the pipeline already handles it.)
+        jobs: list[Any] = self._pending_resample_jobs(manifest)
+        jobs.append(_RunJob(self))
 
         self._progress.setValue(0)
         self._run_button.setEnabled(False)
         self._stop_button.setEnabled(True)
-        self._set_status(f"Running '{runspec.run_id}' …")
+        self._set_status("Starting…")
 
-        task = RunTask(self._state.manifest, runspec)
-        task.progressChanged.connect(lambda pct: self._progress.setValue(int(pct)))
-        task.taskCompleted.connect(self._on_completed)
-        task.taskTerminated.connect(self._on_terminated)
-        self._task = task
-        QgsApplication.taskManager().addTask(task)
+        controller = RunController(jobs)
+        controller.progressChanged.connect(self._on_pipeline_progress)
+        controller.finished.connect(self._on_pipeline_finished)
+        controller.failed.connect(self._on_pipeline_failed)
+        controller.stopped.connect(self._on_pipeline_stopped)
+        self._controller = controller
+        controller.start()
 
     # -- stop --------------------------------------------------------------------------
     def _on_stop_clicked(self) -> None:
@@ -175,14 +175,17 @@ class RunPage(QWidget):
         in the background. The task's ``taskTerminated`` signal then updates the UI.
         """
         tasks = self._running_tasks()
-        if not tasks:
+        if self._controller is None and not tasks:
             self._stop_button.setEnabled(False)
             self._set_status("No simulation is running.")
             return
         self._stop_button.setEnabled(False)  # one stop is enough; avoid repeat clicks
-        self._set_status(
-            f"Stopping {len(tasks)} running simulation(s) — terminating the model process…"
-        )
+        self._set_status("Stopping — terminating the running step…")
+        # Cancel the active pipeline step (resample or run); also sweep the task manager for any
+        # RunTask, so a stray run from elsewhere is caught too.
+        if self._controller is not None:
+            with contextlib.suppress(Exception):
+                self._controller.cancel()
         for task in tasks:
             with contextlib.suppress(Exception):
                 task.cancel()
@@ -264,21 +267,22 @@ class RunPage(QWidget):
                 return False
         return True
 
-    def _apply_pending_resamples(self, manifest: Any) -> bool:
-        """Apply any armed-but-not-applied raster resamples before the run.
+    def _pending_resample_jobs(self, manifest: Any) -> list[Any]:
+        """Build a resample job for each raster input whose "Resample to" is armed and needed.
 
-        For each raster input whose "Resample to" is ticked on the Parameters page, resample its
-        selected raster to the chosen resolution/method, load the result and re-point the input at
-        it. Skipped when the input is not in use, has no on-disk raster, or is already at the target
-        resolution (e.g. Apply was pressed). Returns False (aborting the run) on a resample error.
+        Each job resamples the input's raster to the requested resolution in the background and, on
+        success, re-points the input at the result. Inputs that are not in use, not on disk, or
+        already at the target resolution (e.g. Apply was pressed) are skipped -- so pressing Apply
+        first costs nothing.
         """
+        jobs: list[Any] = []
         requests = getattr(self._state, "resample_requests", None)
-        if not requests:
-            return True
+        if not requests or manifest is None:
+            return jobs
         project = QgsProject.instance()
         values = self._state.param_values
         for name, req in list(requests.items()):
-            spec = manifest.inputs.get(name) if manifest is not None else None
+            spec = manifest.inputs.get(name)
             if spec is not None and not spec.is_visible(values):
                 continue  # this input is not used in the current configuration
             layer_id = self._state.input_layers.get(name)
@@ -289,8 +293,7 @@ class RunPage(QWidget):
                 continue
             src = _layer_local_path(layer)
             if src is None:
-                self._set_status(f"Cannot resample '{name}': its raster is not saved to disk yet.")
-                return False
+                continue  # not on disk (ensure_inputs_saved runs first, so this is defensive)
             res = float(req.get("resolution") or 0.0)
             if res <= 0:
                 continue
@@ -298,21 +301,18 @@ class RunPage(QWidget):
             if native is not None and abs(native[0] - res) < 1e-9 and abs(native[1] - res) < 1e-9:
                 continue  # already at the target resolution (nothing to do)
             dst = (req.get("out_path") or "").strip() or default_resampled_path(src, res)
-            self._set_status(f"Resampling '{name}' to {res:g} m …")
-            try:
-                resample_raster(src, dst, res, req.get("alg") or "bilinear")
-            except ResampleError as exc:
-                self._set_status(f"Resample failed for '{name}': {exc}")
-                return False
-            new_layer = QgsRasterLayer(dst, os.path.basename(dst))
-            if not new_layer.isValid():
-                self._set_status(f"Resampled raster could not be loaded: {dst}")
-                return False
-            project.addMapLayer(new_layer, True)
-            apply_hillshade(new_layer)
-            self._state.input_layers[name] = new_layer.id()
-            self._state.inputLayerReplaced.emit(name, new_layer.id())
-        return True
+            jobs.append(_ResampleJob(self, name, src, dst, res, req.get("alg") or "bilinear"))
+        return jobs
+
+    def _load_resampled_input(self, name: str, path: str) -> None:
+        """Main-thread: load a freshly-resampled raster and re-point input ``name`` at it."""
+        new_layer = QgsRasterLayer(path, os.path.basename(path))
+        if not new_layer.isValid():
+            raise RuntimeError(f"the resampled raster could not be loaded: {path}")
+        QgsProject.instance().addMapLayer(new_layer, True)
+        apply_hillshade(new_layer)
+        self._state.input_layers[name] = new_layer.id()
+        self._state.inputLayerReplaced.emit(name, new_layer.id())
 
     def _prompt_and_save_layer(self, label: str, layer: Any) -> bool:
         """Ask where to save ``layer``, export it, and re-point it. False if the user cancelled."""
@@ -411,43 +411,56 @@ class RunPage(QWidget):
     def _selected_outputs(self) -> list[str]:
         return [name for name, check in self._output_checks.items() if check.isChecked()]
 
-    # -- completion (main thread) ------------------------------------------------------
-    def _on_completed(self) -> None:
+    # -- pipeline (main thread) --------------------------------------------------------
+    def _on_pipeline_progress(self, fraction: float, info: str) -> None:
+        self._progress.setValue(round(fraction * 100.0))
+        self._progress_info.setText(info)
+
+    def _on_pipeline_finished(self, results: Any) -> None:
+        self._controller = None
         self._run_button.setEnabled(True)
         self._stop_button.setEnabled(False)
-        result = self._task.result if self._task is not None else None
-        self._task = None
-        if result is None:
+        self._progress_info.setText("")
+        run_results = [r for r in (results or []) if r is not None]
+        if not run_results:
             self._set_status("Run finished, but produced no result.")
             return
-        if result.ok:
-            loaded = self._load_results(result)
+        # One run for now; a sweep will summarise many. Load each successful run's outputs.
+        messages: list[str] = []
+        any_ok = False
+        for result in run_results:
+            if result.ok:
+                any_ok = True
+                loaded = self._load_results(result)
+                messages.append(
+                    f"Run '{result.run_id}' complete — {loaded} layer(s) added, grouped under "
+                    f"'{result.run_id}'."
+                )
+            else:
+                messages.append(f"Run '{result.run_id}' failed: {result.error}")
+        if any_ok:
             self._progress.setValue(100)
-            msg = (
-                f"Run '{result.run_id}' complete — {loaded} layer(s) added, grouped under "
-                f"'{result.run_id}'."
-            )
             if self._loaded_frame_series:
-                msg += (
-                    " Open View ▸ Panels ▸ Temporal Controller (animation mode) "
+                messages.append(
+                    "Open View ▸ Panels ▸ Temporal Controller (animation mode) "
                     "to step through the frames."
                 )
-            self._set_status(msg)
-        else:
-            self._set_status(f"Run failed: {result.error}")
+        self._set_status(" ".join(messages))
 
-    def _on_terminated(self) -> None:
+    def _on_pipeline_failed(self, message: str) -> None:
+        self._controller = None
         self._run_button.setEnabled(True)
         self._stop_button.setEnabled(False)
-        was_cancelled = self._task is not None and self._task.isCanceled()
-        message = self._task.error_message if self._task is not None else None
-        self._task = None
-        if was_cancelled:
-            # User pressed Stop: the model process was killed. Not a failure — just stopped.
-            self._progress.setValue(0)
-            self._set_status("Run stopped.")
-        else:
-            self._set_status(f"Run could not execute: {message or 'terminated'}")
+        self._progress_info.setText("")
+        self._set_status(f"Run could not execute: {message or 'terminated'}")
+
+    def _on_pipeline_stopped(self) -> None:
+        self._controller = None
+        self._run_button.setEnabled(True)
+        self._stop_button.setEnabled(False)
+        self._progress.setValue(0)
+        self._progress_info.setText("")
+        self._set_status("Run stopped.")
 
     def _load_results(self, result: Any) -> int:
         """Load a run's outputs into one layer-tree group named after the run.
@@ -634,6 +647,59 @@ class RunPage(QWidget):
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
+
+
+class _ResampleJob:
+    """Pipeline step: resample a raster input in the background, then re-point the input at it."""
+
+    weight = 0.15  # typically much shorter than a simulation
+
+    def __init__(
+        self, page: RunPage, name: str, src: str, dst: str, resolution: float, alg: str
+    ) -> None:
+        self._page = page
+        self._name = name
+        self._src = src
+        self._dst = dst
+        self._res = resolution
+        self._alg = alg
+        self.label = f"Resampling '{name}' to {resolution:g} m"
+        self.result: Any = None  # a resample contributes no run result
+        self._task: ResampleTask | None = None
+
+    def make_task(self) -> ResampleTask:
+        self._task = ResampleTask(self._src, self._dst, self._res, self._alg)
+        return self._task
+
+    def finalize(self) -> None:
+        task = self._task
+        if task is None or task.error:
+            raise RuntimeError(task.error if task else "resample did not run")
+        if not task.out_path or not os.path.exists(task.out_path):
+            raise RuntimeError("the resample produced no output")
+        self._page._load_resampled_input(self._name, task.out_path)
+
+
+class _RunJob:
+    """Pipeline step: run one simulation. Its run-spec is built when the step starts, so it sees
+    any inputs re-pointed by earlier resample steps."""
+
+    weight = 1.0
+
+    def __init__(self, page: RunPage) -> None:
+        self._page = page
+        self.label = "Running the simulation"
+        self.result: Any = None
+        self._task: RunTask | None = None
+
+    def make_task(self) -> RunTask:
+        runspec = self._page._build_runspec()  # may raise -> the pipeline reports it as failed
+        self.label = f"Running '{runspec.run_id}'"
+        self._task = RunTask(self._page._state.manifest, runspec)
+        return self._task
+
+    def finalize(self) -> None:
+        self.result = self._task.result if self._task is not None else None
 
 
 def _layer_local_path(layer: Any) -> str | None:

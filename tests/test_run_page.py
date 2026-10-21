@@ -266,7 +266,14 @@ def test_apply_pending_resamples_runs_armed_request(
     state.resample_requests["dem"] = {"resolution": 8.0, "alg": "average", "out_path": ""}
     page = RunPage(state)
 
-    assert page._apply_pending_resamples(manifest) is True
+    # A resample job is built; drive it synchronously (as the pipeline controller would).
+    jobs = page._pending_resample_jobs(manifest)
+    assert len(jobs) == 1
+    job = jobs[0]
+    task = job.make_task()
+    assert task.run() is True
+    job.finalize()
+
     new_id = state.input_layers["dem"]
     assert new_id != layer.id()  # re-pointed to the resampled raster
     new_layer = QgsProject.instance().mapLayer(new_id)
@@ -302,11 +309,11 @@ def test_apply_pending_resamples_skips_when_already_at_target(
     state = StudyState()
     state.set_manifest(manifest)
     state.input_layers["dem"] = layer.id()
-    # Target equals the native resolution -> nothing to do, input left untouched.
+    # Target equals the native resolution -> no job built, input left untouched.
     state.resample_requests["dem"] = {"resolution": 4.0, "alg": "bilinear", "out_path": ""}
     page = RunPage(state)
 
-    assert page._apply_pending_resamples(manifest) is True
+    assert page._pending_resample_jobs(manifest) == []
     assert state.input_layers["dem"] == layer.id()
 
 
