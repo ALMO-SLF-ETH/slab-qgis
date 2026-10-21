@@ -105,9 +105,9 @@ def test_params_and_inputs_are_laid_out_in_groups(qgis_app: QgsApplication, mani
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    # declared param groups, then the trailing bucket holding the ungrouped inputs (the always-
-    # present release-estimate box is not a manifest group).
-    titles = [b.title() for b in page.findChildren(QGroupBox) if b is not page._estimate_box]
+    titles = [b.title() for b in page.findChildren(QGroupBox)]
+    # declared param groups, then the trailing bucket holding the ungrouped inputs (this fixture
+    # has no release section, so no release-estimate rows are added)
     assert titles == ["Physical parameters", "Numerics", "Parameters"]
 
 
@@ -181,3 +181,59 @@ def test_release_sources_show_only_for_their_shape(qgis_app: QgsApplication) -> 
     page._set_param("release_type", "RECTANGLE")
     assert polygon_row.isHidden()
     assert raster_row.isHidden()
+
+
+@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+def test_release_estimate_lives_in_release_group_and_updates(qgis_app: QgsApplication) -> None:
+    assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
+    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+
+    assert page._area_label is not None and page._volume_label is not None
+    # the estimate sits inside the release group box (not a page-level box)
+    box = page._area_label.parentWidget()
+    while box is not None and not isinstance(box, QGroupBox):
+        box = box.parentWidget()
+    assert box is not None and "release" in box.title().lower()
+
+    page._set_param("release_type", "RECTANGLE")
+    page._set_param("rect_Lx", 4.0)
+    page._set_param("rect_Ly", 3.0)
+    page._set_param("h0", 2.0)
+    assert "12.0 m" in page._area_label.text()
+    assert "24.0 m" in page._volume_label.text()
+
+
+@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+def test_release_estimate_updates_when_polygon_is_edited_and_committed(
+    qgis_app: QgsApplication,
+) -> None:
+    assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
+    from qgis.core import QgsFeature, QgsGeometry, QgsProject, QgsVectorLayer
+
+    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+
+    layer = QgsVectorLayer("Polygon?crs=EPSG:2056", "rel", "memory")
+    feature = QgsFeature()
+    feature.setGeometry(QgsGeometry.fromWkt("POLYGON((0 0,10 0,10 10,0 10,0 0))"))  # 100 m²
+    layer.dataProvider().addFeature(feature)
+    layer.updateExtents()
+    QgsProject.instance().addMapLayer(layer)
+
+    page._input_combos["release_zones"].setLayer(layer)
+    page._set_param("release_type", "POLYGON")
+    page._set_param("h0", 2.0)
+    assert page._area_label is not None
+    assert "100.0 m" in page._area_label.text()
+
+    # Edit the geometry and commit; the estimate must refresh without any other interaction.
+    layer.startEditing()
+    fid = next(layer.getFeatures()).id()
+    layer.changeGeometry(fid, QgsGeometry.fromWkt("POLYGON((0 0,20 0,20 10,0 10,0 0))"))  # 200 m²
+    layer.commitChanges()
+    assert "200.0 m" in page._area_label.text()

@@ -19,6 +19,7 @@ sent to the model.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,7 @@ class ParametersPage(QWidget):
         self._state = state
         self._rows: list[_Row] = []
         self._input_combos: dict[str, QgsMapLayerComboBox] = {}
+        self._wired_polygon: QgsVectorLayer | None = None  # release layer we listen to for edits
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -112,18 +114,12 @@ class ParametersPage(QWidget):
         self._groups_layout = QVBoxLayout(self._groups_host)
         self._groups_layout.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self._groups_host)
-
-        # Live release-size estimate, shown only for models that follow the release convention.
-        self._estimate_box = QGroupBox("Release estimate (approx.)")
-        est_form = QFormLayout(self._estimate_box)
-        self._area_label = QLabel("—")
-        self._volume_label = QLabel("—")
-        est_form.addRow("Area", self._area_label)
-        est_form.addRow("Volume", self._volume_label)
-        self._estimate_box.setVisible(False)
-        root.addWidget(self._estimate_box)
-
         root.addStretch(1)
+
+        # Live release-size estimate labels, (re)created inside the release group during _rebuild;
+        # None for a model that has no release section.
+        self._area_label: QLabel | None = None
+        self._volume_label: QLabel | None = None
 
         state.manifestChanged.connect(self._rebuild)
         self._rebuild(state.manifest)
@@ -137,6 +133,8 @@ class ParametersPage(QWidget):
                 widget.deleteLater()
         self._rows.clear()
         self._input_combos.clear()
+        self._area_label = None  # recreated below only if there is a release section
+        self._volume_label = None
 
         has_content = manifest is not None and (manifest.params or manifest.inputs)
         self._empty.setVisible(not has_content)
@@ -164,6 +162,10 @@ class ParametersPage(QWidget):
                     # the input's own spec so it shows/hides exactly when the input does.
                     panel = _ResamplePanel(combo)
                     self._add_full_row(form, box, panel, spec)
+            # The release section (the group that selects the release shape) gets a live
+            # area/volume estimate right below its selection controls.
+            if any(p.name == "release_type" for p in params):
+                self._add_estimate_rows(form)
             self._groups_layout.addWidget(box)
 
         self._apply_visibility()
@@ -317,18 +319,46 @@ class ParametersPage(QWidget):
 
     def _set_input(self, name: str, layer: QgsMapLayer | None) -> None:
         self._state.input_layers[name] = layer.id() if layer is not None else None
+        if name == "release_zones":
+            # Re-estimate automatically when the user commits edits to the release polygon layer.
+            self._listen_for_edits(layer)
         self._refresh_estimate()
 
+    def _listen_for_edits(self, layer: QgsMapLayer | None) -> None:
+        """(Re)connect the selected release-zone layer's commit signals to the estimate refresh."""
+        if self._wired_polygon is not None:
+            for signal in (
+                self._wired_polygon.afterCommitChanges,
+                self._wired_polygon.editingStopped,
+            ):
+                with contextlib.suppress(Exception):
+                    signal.disconnect(self._refresh_estimate)
+            self._wired_polygon = None
+        if isinstance(layer, QgsVectorLayer):
+            # afterCommitChanges: edits saved while staying in edit mode; editingStopped: toggling
+            # edit mode off (which commits/rolls back). Either way the geometry on disk may differ.
+            with contextlib.suppress(Exception):
+                layer.afterCommitChanges.connect(self._refresh_estimate)
+            with contextlib.suppress(Exception):
+                layer.editingStopped.connect(self._refresh_estimate)
+            self._wired_polygon = layer
+
     # -- release estimate --------------------------------------------------------------
+    def _add_estimate_rows(self, form: QFormLayout) -> None:
+        """Add the live area/volume estimate under the release section's selection controls."""
+        heading = QLabel("<b>Release estimate</b> <i>(approx.)</i>")
+        form.addRow(heading)
+        self._area_label = QLabel("—")
+        self._volume_label = QLabel("—")
+        form.addRow("Area", self._area_label)
+        form.addRow("Volume", self._volume_label)
+
     def _refresh_estimate(self) -> None:
         """Update the area/volume labels for the current release configuration."""
-        params = self._state.param_values
-        if "release_type" not in params:
-            self._estimate_box.setVisible(False)
-            return
-        self._estimate_box.setVisible(True)
+        if self._area_label is None or self._volume_label is None:
+            return  # model has no release section
         est = estimate.compute_release_estimate(
-            params,
+            self._state.param_values,
             polygon_area_m2=self._polygon_area(),
             release_raster_path=self._release_raster_path(),
         )
