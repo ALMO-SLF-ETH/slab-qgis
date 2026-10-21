@@ -48,6 +48,13 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from almo_sweep_qgis import engine, settings
+from almo_sweep_qgis.dem.resample import (
+    ResampleError,
+    default_resampled_path,
+    raster_resolution,
+    resample_raster,
+)
+from almo_sweep_qgis.dem.style import apply_hillshade
 from almo_sweep_qgis.panels.run_task import RunTask
 from almo_sweep_qgis.state import StudyState
 
@@ -136,6 +143,10 @@ class RunPage(QWidget):
             # The model reads each input from a file path, so any input that is only a temporary /
             # in-memory / project-embedded layer (no file on disk) must be saved first.
             if not self._ensure_inputs_saved(manifest):
+                return
+            # Apply any raster resample armed on the Parameters page ("Resample to" ticked) but
+            # never applied, so starting the run honours it.
+            if not self._apply_pending_resamples(manifest):
                 return
         try:
             runspec = self._build_runspec()
@@ -251,6 +262,56 @@ class RunPage(QWidget):
                     "Save it (or pick a file-based layer) and run again."
                 )
                 return False
+        return True
+
+    def _apply_pending_resamples(self, manifest: Any) -> bool:
+        """Apply any armed-but-not-applied raster resamples before the run.
+
+        For each raster input whose "Resample to" is ticked on the Parameters page, resample its
+        selected raster to the chosen resolution/method, load the result and re-point the input at
+        it. Skipped when the input is not in use, has no on-disk raster, or is already at the target
+        resolution (e.g. Apply was pressed). Returns False (aborting the run) on a resample error.
+        """
+        requests = getattr(self._state, "resample_requests", None)
+        if not requests:
+            return True
+        project = QgsProject.instance()
+        values = self._state.param_values
+        for name, req in list(requests.items()):
+            spec = manifest.inputs.get(name) if manifest is not None else None
+            if spec is not None and not spec.is_visible(values):
+                continue  # this input is not used in the current configuration
+            layer_id = self._state.input_layers.get(name)
+            if not layer_id:
+                continue
+            layer = project.mapLayer(layer_id)
+            if not isinstance(layer, QgsRasterLayer):
+                continue
+            src = _layer_local_path(layer)
+            if src is None:
+                self._set_status(f"Cannot resample '{name}': its raster is not saved to disk yet.")
+                return False
+            res = float(req.get("resolution") or 0.0)
+            if res <= 0:
+                continue
+            native = raster_resolution(src)
+            if native is not None and abs(native[0] - res) < 1e-9 and abs(native[1] - res) < 1e-9:
+                continue  # already at the target resolution (nothing to do)
+            dst = (req.get("out_path") or "").strip() or default_resampled_path(src, res)
+            self._set_status(f"Resampling '{name}' to {res:g} m …")
+            try:
+                resample_raster(src, dst, res, req.get("alg") or "bilinear")
+            except ResampleError as exc:
+                self._set_status(f"Resample failed for '{name}': {exc}")
+                return False
+            new_layer = QgsRasterLayer(dst, os.path.basename(dst))
+            if not new_layer.isValid():
+                self._set_status(f"Resampled raster could not be loaded: {dst}")
+                return False
+            project.addMapLayer(new_layer, True)
+            apply_hillshade(new_layer)
+            self._state.input_layers[name] = new_layer.id()
+            self._state.inputLayerReplaced.emit(name, new_layer.id())
         return True
 
     def _prompt_and_save_layer(self, label: str, layer: Any) -> bool:

@@ -20,6 +20,10 @@ class StudyState(QObject):
     #: cleared. ``object`` payload keeps this Qt5/Qt6-safe and avoids importing the engine here.
     manifestChanged = pyqtSignal(object)
 
+    #: Emitted as ``(input_name, new_layer_id)`` when a page swaps an input's layer for another
+    #: (e.g. the Run page resamples a raster at launch), so the Parameters page re-syncs its combo.
+    inputLayerReplaced = pyqtSignal(str, object)
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._manifest: Any | None = None
@@ -28,6 +32,9 @@ class StudyState(QObject):
         self.input_layers: dict[str, str | None] = {}
         #: parameter name -> current value (seeded with manifest defaults).
         self.param_values: dict[str, Any] = {}
+        #: input name -> a pending resample request {"resolution", "alg", "out_path"} armed via the
+        #: "Resample to" control but not yet applied; the Run page applies these at launch.
+        self.resample_requests: dict[str, dict[str, Any]] = {}
 
     @property
     def manifest(self) -> Any | None:
@@ -43,4 +50,5 @@ class StudyState(QObject):
         self._manifest_path = path
         self.input_layers = {}
         self.param_values = {}
+        self.resample_requests = {}
         self.manifestChanged.emit(manifest)

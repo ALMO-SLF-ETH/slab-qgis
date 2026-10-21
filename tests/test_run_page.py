@@ -234,6 +234,82 @@ def test_stop_cancels_running_task_and_kills_process(
     assert "cancelled" in (task.result.error or "")
 
 
+def test_apply_pending_resamples_runs_armed_request(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    pytest.importorskip("osgeo")
+    import numpy as np
+    from almo_sweep.contracts import parse_manifest
+    from almo_sweep_qgis.dem.resample import raster_resolution
+    from osgeo import gdal
+    from qgis.core import QgsRasterLayer
+
+    manifest = parse_manifest(
+        {
+            "model": {"name": "m", "version": "1"},
+            "invocation": {"command": ["x"]},
+            "inputs": {"dem": {"kind": "raster"}},
+            "outputs": {"g": {"kind": "raster"}},
+        }
+    )
+    src = str(tmp_path / "dem.tif")
+    ds = gdal.GetDriverByName("GTiff").Create(src, 8, 8, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform([0, 4, 0, 0, 0, -4])  # 4 m cells
+    ds.GetRasterBand(1).WriteArray(np.ones((8, 8), dtype="float32"))
+    ds = None
+    layer = QgsRasterLayer(src, "dem")
+    QgsProject.instance().addMapLayer(layer)
+
+    state = StudyState()
+    state.set_manifest(manifest)
+    state.input_layers["dem"] = layer.id()
+    state.resample_requests["dem"] = {"resolution": 8.0, "alg": "average", "out_path": ""}
+    page = RunPage(state)
+
+    assert page._apply_pending_resamples(manifest) is True
+    new_id = state.input_layers["dem"]
+    assert new_id != layer.id()  # re-pointed to the resampled raster
+    new_layer = QgsProject.instance().mapLayer(new_id)
+    assert new_layer is not None
+    assert raster_resolution(new_layer.source().split("|", 1)[0]) == (8.0, 8.0)
+
+
+def test_apply_pending_resamples_skips_when_already_at_target(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    pytest.importorskip("osgeo")
+    import numpy as np
+    from almo_sweep.contracts import parse_manifest
+    from osgeo import gdal
+    from qgis.core import QgsRasterLayer
+
+    manifest = parse_manifest(
+        {
+            "model": {"name": "m", "version": "1"},
+            "invocation": {"command": ["x"]},
+            "inputs": {"dem": {"kind": "raster"}},
+            "outputs": {"g": {"kind": "raster"}},
+        }
+    )
+    src = str(tmp_path / "dem.tif")
+    ds = gdal.GetDriverByName("GTiff").Create(src, 8, 8, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform([0, 4, 0, 0, 0, -4])  # 4 m cells
+    ds.GetRasterBand(1).WriteArray(np.ones((8, 8), dtype="float32"))
+    ds = None
+    layer = QgsRasterLayer(src, "dem")
+    QgsProject.instance().addMapLayer(layer)
+
+    state = StudyState()
+    state.set_manifest(manifest)
+    state.input_layers["dem"] = layer.id()
+    # Target equals the native resolution -> nothing to do, input left untouched.
+    state.resample_requests["dem"] = {"resolution": 4.0, "alg": "bilinear", "out_path": ""}
+    page = RunPage(state)
+
+    assert page._apply_pending_resamples(manifest) is True
+    assert state.input_layers["dem"] == layer.id()
+
+
 def test_load_results_adds_raster_layer(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:

@@ -127,7 +127,18 @@ class ParametersPage(QWidget):
             QgsProject.instance().layersWillBeRemoved.connect(self._on_layers_will_be_removed)
 
         state.manifestChanged.connect(self._rebuild)
+        # When another page swaps an input's layer (e.g. the Run page resamples at launch), reflect
+        # it in the matching combo so the UI stays in sync.
+        state.inputLayerReplaced.connect(self._on_input_layer_replaced)
         self._rebuild(state.manifest)
+
+    def _on_input_layer_replaced(self, name: str, layer_id: Any) -> None:
+        combo = self._input_combos.get(name)
+        if combo is None:
+            return
+        layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
+        if layer is not None and combo.currentLayer() is not layer:
+            combo.setLayer(layer)  # fires layerChanged -> _set_input (same id, harmless)
 
     def _on_layers_will_be_removed(self, layer_ids: Any) -> None:
         """Reset any input whose selected layer is about to be removed back to 'no layer'."""
@@ -173,7 +184,7 @@ class ParametersPage(QWidget):
                 if spec.kind == "raster":
                     # Below a raster input: show its resolution and offer to resample it. Tied to
                     # the input's own spec so it shows/hides exactly when the input does.
-                    panel = _ResamplePanel(combo)
+                    panel = _ResamplePanel(combo, self._state, spec.name)
                     self._add_full_row(form, box, panel, spec)
             # The release section (the group that selects the release shape) gets a live
             # area/volume estimate right below its selection controls.
@@ -507,9 +518,17 @@ class _ResamplePanel(QWidget):
     resolution.
     """
 
-    def __init__(self, combo: QgsMapLayerComboBox, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        combo: QgsMapLayerComboBox,
+        state: StudyState,
+        input_name: str,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._combo = combo
+        self._state = state
+        self._input_name = input_name
         self._task: _ResampleTask | None = None
         self._out_edited = False
 
@@ -558,7 +577,8 @@ class _ResamplePanel(QWidget):
 
         self._combo.layerChanged.connect(lambda _layer: self._on_layer_changed())
         self._enable.toggled.connect(self._on_enabled)
-        self._target.valueChanged.connect(lambda _v: self._refresh_default_out())
+        self._target.valueChanged.connect(self._on_target_changed)
+        self._method.currentIndexChanged.connect(lambda _i: self._publish_request())
         self._out.textEdited.connect(self._on_out_edited)
         out_browse.clicked.connect(self._browse_out)
         self._apply.clicked.connect(self._on_apply)
@@ -580,14 +600,21 @@ class _ResamplePanel(QWidget):
         self._out_edited = False  # a new source resets the default output name
         self._refresh_default_out()
         self._update_apply_enabled()
+        self._publish_request()
 
     def _on_enabled(self, on: bool) -> None:
         for widget in (self._target, self._method, self._out, self._apply):
             widget.setEnabled(on)
         self._update_apply_enabled()
+        self._publish_request()
+
+    def _on_target_changed(self, _value: float) -> None:
+        self._refresh_default_out()
+        self._publish_request()
 
     def _on_out_edited(self, _text: str) -> None:
         self._out_edited = True
+        self._publish_request()
 
     def _refresh_default_out(self) -> None:
         if self._out_edited:
@@ -595,6 +622,17 @@ class _ResamplePanel(QWidget):
         src = _local_raster_path(self._combo.currentLayer())
         if src is not None:
             self._out.setText(default_resampled_path(src, self._target.value()))
+
+    def _publish_request(self) -> None:
+        """Mirror the armed resample into shared state, so the Run page can apply it at launch."""
+        if self._enable.isChecked():
+            self._state.resample_requests[self._input_name] = {
+                "resolution": float(self._target.value()),
+                "alg": self._method.currentData(),
+                "out_path": self._out.text().strip(),
+            }
+        else:
+            self._state.resample_requests.pop(self._input_name, None)
 
     def _update_apply_enabled(self) -> None:
         enabled = self._enable.isChecked() and _local_raster_path(self._combo.currentLayer())

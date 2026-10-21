@@ -165,7 +165,8 @@ no launching QGIS from a terminal.
      **Apply**. The result is written to a new GeoTIFF (defaulting to the source name plus
      `_<res>m`, e.g. `dem_05m.tif` for 0.5 m, in the source's folder — you can change the path),
      added as a hillshade, and selected as the input. Resampling is skipped if the target equals
-     the current resolution.
+     the current resolution. If **Resample to** is ticked but you never press **Apply**, the
+     resample is performed automatically when the simulation starts.
    - **Release estimate** — in the release section, below the release selection, a live approximate
      **area** and **volume** for the current release is shown as you edit: the polygon's area for a
      `POLYGON` release, `Lx·Ly` / `π·rx·ry` for a `RECTANGLE` / `ELLIPSE`, and (for a `RASTER`
