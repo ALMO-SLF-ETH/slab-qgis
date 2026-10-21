@@ -158,6 +158,18 @@ no launching QGIS from a terminal.
    **release-zone layer appears only when the release shape is `POLYGON`**; `RECTANGLE` and
    `ELLIPSE` releases are defined numerically instead. For dampm the DEM must be an ESRI ASCII
    `.asc` and the release a polygon shapefile; load them into QGIS first.
+
+   - **DEM resolution** — under each raster picker the selected raster's native **resolution** is
+     shown. Tick **Resample to** to coarsen/refine it to a chosen cell size with a chosen method
+     (bilinear — a 2×2 kernel — by default; "average" is better for downsampling) and click
+     **Apply**. The result is written to a new GeoTIFF (defaulting to the source name plus
+     `_<res>m`, e.g. `dem_05m.tif` for 0.5 m, in the source's folder — you can change the path),
+     added as a hillshade, and selected as the input. Resampling is skipped if the target equals
+     the current resolution.
+   - **Release estimate** — a live, approximate **area** and **volume** for the current release is
+     shown as you edit: the polygon's area for a `POLYGON` release, `Lx·Ly` / `π·rx·ry` for a
+     `RECTANGLE` / `ELLIPSE`, and (for a `RASTER` release) the cell size × the released cells, with
+     volume = area × depth (`h0`) or, for a raster, the summed per-cell depths × cell area.
 2. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
    Progress shows in the panel and in QGIS's task bar. If any chosen input layer isn't saved to
    disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,

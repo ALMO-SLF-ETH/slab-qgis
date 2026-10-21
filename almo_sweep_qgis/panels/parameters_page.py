@@ -19,10 +19,19 @@ sent to the model.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
-from qgis.core import Qgis, QgsMapLayer, QgsProject, QgsRasterLayer, QgsVectorLayer
+from qgis.core import (
+    Qgis,
+    QgsApplication,
+    QgsMapLayer,
+    QgsProject,
+    QgsRasterLayer,
+    QgsTask,
+    QgsVectorLayer,
+)
 from qgis.gui import QgsMapLayerComboBox
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -33,12 +42,23 @@ from qgis.PyQt.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QPushButton,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from almo_sweep_qgis import estimate
+from almo_sweep_qgis.dem.resample import (
+    RESAMPLE_METHODS,
+    ResampleError,
+    default_resampled_path,
+    raster_resolution,
+    resample_raster,
+)
+from almo_sweep_qgis.dem.style import apply_hillshade
 from almo_sweep_qgis.state import StudyState
 
 # Fallback bounds when the manifest leaves a numeric parameter unbounded.
@@ -78,6 +98,7 @@ class ParametersPage(QWidget):
         super().__init__(parent)
         self._state = state
         self._rows: list[_Row] = []
+        self._input_combos: dict[str, QgsMapLayerComboBox] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -91,6 +112,17 @@ class ParametersPage(QWidget):
         self._groups_layout = QVBoxLayout(self._groups_host)
         self._groups_layout.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self._groups_host)
+
+        # Live release-size estimate, shown only for models that follow the release convention.
+        self._estimate_box = QGroupBox("Release estimate (approx.)")
+        est_form = QFormLayout(self._estimate_box)
+        self._area_label = QLabel("—")
+        self._volume_label = QLabel("—")
+        est_form.addRow("Area", self._area_label)
+        est_form.addRow("Volume", self._volume_label)
+        self._estimate_box.setVisible(False)
+        root.addWidget(self._estimate_box)
+
         root.addStretch(1)
 
         state.manifestChanged.connect(self._rebuild)
@@ -104,6 +136,7 @@ class ParametersPage(QWidget):
                 widget.setParent(None)
                 widget.deleteLater()
         self._rows.clear()
+        self._input_combos.clear()
 
         has_content = manifest is not None and (manifest.params or manifest.inputs)
         self._empty.setVisible(not has_content)
@@ -123,11 +156,18 @@ class ParametersPage(QWidget):
                 self._add_row(form, box, _param_label(spec), field, spec)
                 self._state.param_values[spec.name] = spec.default
             for spec in inputs:
-                field = self._make_input_control(spec.name, spec)
+                field, combo = self._make_input_control(spec.name, spec)
+                self._input_combos[spec.name] = combo
                 self._add_row(form, box, _input_label(spec), field, spec)
+                if spec.kind == "raster":
+                    # Below a raster input: show its resolution and offer to resample it. Tied to
+                    # the input's own spec so it shows/hides exactly when the input does.
+                    panel = _ResamplePanel(combo)
+                    self._add_full_row(form, box, panel, spec)
             self._groups_layout.addWidget(box)
 
         self._apply_visibility()
+        self._refresh_estimate()
 
     def _add_row(
         self, form: QFormLayout, box: QGroupBox, label: QWidget, field: QWidget, spec: Any
@@ -135,6 +175,12 @@ class ParametersPage(QWidget):
         index = form.rowCount()
         form.addRow(label, field)
         self._rows.append(_Row(spec, form, index, box, label, field))
+
+    def _add_full_row(self, form: QFormLayout, box: QGroupBox, widget: QWidget, spec: Any) -> None:
+        """Add a widget that spans the whole form row (no separate label), e.g. a sub-panel."""
+        index = form.rowCount()
+        form.addRow(widget)
+        self._rows.append(_Row(spec, form, index, box, widget, widget))
 
     # -- visibility --------------------------------------------------------------------
     def _apply_visibility(self) -> None:
@@ -221,13 +267,16 @@ class ParametersPage(QWidget):
         self._state.param_values[name] = value
         # A change may reveal or hide dependent params/inputs (visible_when).
         self._apply_visibility()
+        # ...and may change the release size (shape, depth, geometry).
+        self._refresh_estimate()
 
     # -- input controls ----------------------------------------------------------------
-    def _make_input_control(self, name: str, spec: Any) -> QWidget:
+    def _make_input_control(self, name: str, spec: Any) -> tuple[QWidget, QgsMapLayerComboBox]:
         """A layer picker plus a '…' button to load a file from disk and select it.
 
         Picking a file loads it as a project layer and selects it in the combo, so it behaves
-        exactly like an already-loaded layer from then on (and the run reads its source).
+        exactly like an already-loaded layer from then on (and the run reads its source). Returns
+        the row widget and the combo (so a raster input's resample panel can track it).
         """
         combo = QgsMapLayerComboBox()
         combo.setFilters(_filter_for(spec))
@@ -247,7 +296,7 @@ class ParametersPage(QWidget):
         layout.addWidget(combo, 1)
         layout.addWidget(browse, 0)
         self._set_input(name, combo.currentLayer())
-        return container
+        return container, combo
 
     def _browse_input_file(self, spec: Any, combo: QgsMapLayerComboBox) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -268,6 +317,52 @@ class ParametersPage(QWidget):
 
     def _set_input(self, name: str, layer: QgsMapLayer | None) -> None:
         self._state.input_layers[name] = layer.id() if layer is not None else None
+        self._refresh_estimate()
+
+    # -- release estimate --------------------------------------------------------------
+    def _refresh_estimate(self) -> None:
+        """Update the area/volume labels for the current release configuration."""
+        params = self._state.param_values
+        if "release_type" not in params:
+            self._estimate_box.setVisible(False)
+            return
+        self._estimate_box.setVisible(True)
+        est = estimate.compute_release_estimate(
+            params,
+            polygon_area_m2=self._polygon_area(),
+            release_raster_path=self._release_raster_path(),
+        )
+        self._area_label.setText(_fmt_area(est.area_m2))
+        self._volume_label.setText(_fmt_volume(est.volume_m3))
+        tip = est.detail or ""
+        self._area_label.setToolTip(tip)
+        self._volume_label.setToolTip(tip)
+
+    def _polygon_area(self) -> float | None:
+        """Total planar area (CRS units²) of the selected release-zone polygon layer, if any."""
+        layer = self._layer_for("release_zones")
+        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            return None
+        total = 0.0
+        for feature in layer.getFeatures():
+            geom = feature.geometry()
+            if geom is not None and not geom.isEmpty():
+                total += geom.area()
+        return total
+
+    def _release_raster_path(self) -> str | None:
+        """Local file path of the selected release raster, if it is on disk."""
+        layer = self._layer_for("release_raster")
+        if layer is None:
+            return None
+        src = layer.source().split("|", 1)[0].strip()
+        return src if os.path.isabs(src) and os.path.exists(src) else None
+
+    def _layer_for(self, input_name: str) -> QgsMapLayer | None:
+        layer_id = self._state.input_layers.get(input_name)
+        if not layer_id:
+            return None
+        return QgsProject.instance().mapLayer(layer_id)
 
 
 def _param_label(spec: Any) -> QLabel:
@@ -318,3 +413,217 @@ def _with_unit(control: QWidget, unit: str | None) -> QWidget:
     layout.addWidget(control, 1)
     layout.addWidget(QLabel(unit))
     return container
+
+
+def _fmt_area(area: float | None) -> str:
+    return "—" if area is None else f"{area:,.1f} m²"
+
+
+def _fmt_volume(volume: float | None) -> str:
+    if volume is None:
+        return "—"
+    if abs(volume) >= 1.0e6:  # also give an easier-to-read Mm³ for large releases
+        return f"{volume:,.0f} m³  ({volume / 1.0e6:,.2f} Mm³)"
+    return f"{volume:,.1f} m³"
+
+
+def _local_raster_path(layer: QgsRasterLayer | None) -> str | None:
+    """The absolute file backing a raster layer, or None if it is not a plain file on disk."""
+    if not isinstance(layer, QgsRasterLayer) or not layer.isValid():
+        return None
+    src = layer.source().split("|", 1)[0].strip()
+    return src if os.path.isabs(src) and os.path.exists(src) else None
+
+
+class _ResamplePanel(QWidget):
+    """Resolution display + optional resampling for a raster input (sits under its picker).
+
+    Shows the selected raster's native resolution, and -- when enabled -- resamples it to a chosen
+    resolution and method, writing a new GeoTIFF (defaulting to the source name + ``_<res>m``) and
+    selecting it in the input's combo so the run uses it. No-op if the target equals the native
+    resolution.
+    """
+
+    def __init__(self, combo: QgsMapLayerComboBox, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._combo = combo
+        self._task: _ResampleTask | None = None
+        self._out_edited = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 0, 0, 6)  # indent under the picker
+        outer.setSpacing(2)
+
+        self._res_label = QLabel("Resolution: —")
+        self._res_label.setEnabled(False)
+        outer.addWidget(self._res_label)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        self._enable = QCheckBox("Resample to")
+        self._target = QDoubleSpinBox()
+        self._target.setDecimals(3)
+        self._target.setRange(0.001, 100000.0)
+        self._target.setValue(2.0)
+        self._target.setSuffix(" m")
+        self._method = QComboBox()
+        for label, alg in RESAMPLE_METHODS:
+            self._method.addItem(label, alg)
+        controls.addWidget(self._enable)
+        controls.addWidget(self._target)
+        controls.addWidget(self._method, 1)
+        outer.addLayout(controls)
+
+        out_row = QHBoxLayout()
+        out_row.setContentsMargins(0, 0, 0, 0)
+        self._out = QLineEdit()
+        self._out.setPlaceholderText("Output raster path (defaults beside the source)")
+        out_browse = QToolButton()
+        out_browse.setText("…")
+        out_browse.setToolTip("Choose where to save the resampled raster")
+        self._apply = QPushButton("Apply")
+        out_row.addWidget(QLabel("Save as"))
+        out_row.addWidget(self._out, 1)
+        out_row.addWidget(out_browse)
+        out_row.addWidget(self._apply)
+        outer.addLayout(out_row)
+
+        self._status = QLabel("")
+        self._status.setWordWrap(True)
+        self._status.setEnabled(False)
+        outer.addWidget(self._status)
+
+        self._combo.layerChanged.connect(lambda _layer: self._on_layer_changed())
+        self._enable.toggled.connect(self._on_enabled)
+        self._target.valueChanged.connect(lambda _v: self._refresh_default_out())
+        self._out.textEdited.connect(self._on_out_edited)
+        out_browse.clicked.connect(self._browse_out)
+        self._apply.clicked.connect(self._on_apply)
+
+        self._on_enabled(False)
+        self._on_layer_changed()
+
+    # -- reactions ---------------------------------------------------------------------
+    def _on_layer_changed(self) -> None:
+        native = self._native_res()
+        if native is None:
+            self._res_label.setText("Resolution: — (no raster, or not saved to disk)")
+        else:
+            x, y = native
+            same = abs(x - y) < 1e-9
+            self._res_label.setText(
+                f"Resolution: {x:g} m" if same else f"Resolution: {x:g} x {y:g} m"
+            )
+        self._out_edited = False  # a new source resets the default output name
+        self._refresh_default_out()
+        self._update_apply_enabled()
+
+    def _on_enabled(self, on: bool) -> None:
+        for widget in (self._target, self._method, self._out, self._apply):
+            widget.setEnabled(on)
+        self._update_apply_enabled()
+
+    def _on_out_edited(self, _text: str) -> None:
+        self._out_edited = True
+
+    def _refresh_default_out(self) -> None:
+        if self._out_edited:
+            return
+        src = _local_raster_path(self._combo.currentLayer())
+        if src is not None:
+            self._out.setText(default_resampled_path(src, self._target.value()))
+
+    def _update_apply_enabled(self) -> None:
+        enabled = self._enable.isChecked() and _local_raster_path(self._combo.currentLayer())
+        self._apply.setEnabled(bool(enabled))
+
+    def _browse_out(self) -> None:
+        start = self._out.text().strip() or ""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save resampled raster", start, "GeoTIFF (*.tif)"
+        )
+        if path:
+            self._out.setText(path)
+            self._out_edited = True
+
+    # -- apply -------------------------------------------------------------------------
+    def _on_apply(self) -> None:
+        src = _local_raster_path(self._combo.currentLayer())
+        if src is None:
+            self._set_status("Select a raster saved on disk first.")
+            return
+        res = float(self._target.value())
+        native = self._native_res()
+        if native is not None and abs(native[0] - res) < 1e-9 and abs(native[1] - res) < 1e-9:
+            self._set_status(f"Already at {res:g} m — no resampling needed.")
+            return
+        dst = self._out.text().strip() or default_resampled_path(src, res)
+        alg = self._method.currentData()
+
+        self._apply.setEnabled(False)
+        self._set_status(f"Resampling to {res:g} m…")
+        task = _ResampleTask(src, dst, res, alg)
+        task.taskCompleted.connect(lambda t=task: self._on_done(t))
+        task.taskTerminated.connect(lambda t=task: self._on_done(t))
+        self._task = task
+        QgsApplication.taskManager().addTask(task)
+
+    def _on_done(self, task: _ResampleTask) -> None:
+        self._task = None
+        self._update_apply_enabled()
+        if task.error is not None:
+            self._set_status(f"Resample failed: {task.error}")
+            return
+        if not task.out_path or not os.path.exists(task.out_path):
+            self._set_status("Resample cancelled.")
+            return
+        layer = QgsRasterLayer(task.out_path, Path(task.out_path).stem)
+        if not layer.isValid():
+            self._set_status(f"Resampled file could not be loaded: {task.out_path}")
+            return
+        QgsProject.instance().addMapLayer(layer)
+        apply_hillshade(layer)
+        self._combo.setLayer(layer)  # fires layerChanged -> becomes the input; updates the label
+        self._set_status(f"Resampled to {task.out_path}")
+
+    # -- helpers -----------------------------------------------------------------------
+    def _native_res(self) -> tuple[float, float] | None:
+        layer = self._combo.currentLayer()
+        if isinstance(layer, QgsRasterLayer) and layer.isValid():
+            return abs(layer.rasterUnitsPerPixelX()), abs(layer.rasterUnitsPerPixelY())
+        src = _local_raster_path(layer if isinstance(layer, QgsRasterLayer) else None)
+        return raster_resolution(src) if src else None
+
+    def _set_status(self, text: str) -> None:
+        self._status.setText(text)
+
+
+class _ResampleTask(QgsTask):
+    """Background raster resample (GDAL warp), so the UI stays responsive on large DEMs."""
+
+    def __init__(self, src: str, dst: str, resolution: float, alg: str) -> None:
+        super().__init__("Resample raster", QgsTask.Flag.CanCancel)
+        self._src = src
+        self._dst = dst
+        self._res = resolution
+        self._alg = alg
+        self.out_path: str | None = None
+        self.error: str | None = None
+
+    def run(self) -> bool:
+        try:
+            self.out_path = resample_raster(
+                self._src,
+                self._dst,
+                self._res,
+                self._alg,
+                progress=lambda frac, _msg: self.setProgress(frac * 100.0),
+                should_cancel=self.isCanceled,
+            )
+        except ResampleError as exc:
+            self.error = str(exc)
+            return False
+        except Exception as exc:  # defensive: surface any unexpected GDAL error
+            self.error = str(exc)
+            return False
+        return not self.isCanceled()

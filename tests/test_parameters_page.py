@@ -6,11 +6,19 @@ from pathlib import Path
 
 import pytest
 from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.parameters_page import ParametersPage
+from almo_sweep_qgis.panels.parameters_page import ParametersPage, _ResamplePanel
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
 from qgis.gui import QgsMapLayerComboBox
-from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, QLabel, QSpinBox
+from qgis.PyQt.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QGroupBox,
+    QLabel,
+    QSpinBox,
+    QWidget,
+)
 
 
 @pytest.fixture
@@ -19,21 +27,41 @@ def manifest(dampm_manifest_path: Path):
     return engine.load_manifest(str(dampm_manifest_path))
 
 
+def _outside_panel(widget: QWidget) -> bool:
+    """True if the widget is not inside a raster input's resample sub-panel."""
+    parent = widget.parent()
+    while parent is not None:
+        if isinstance(parent, _ResamplePanel):
+            return False
+        parent = parent.parent()
+    return True
+
+
+def _param_widgets(page: ParametersPage, cls: type) -> list:
+    """Widgets of a type that belong to the parameter/input form (not a resample panel)."""
+    return [w for w in page.findChildren(cls) if _outside_panel(w)]
+
+
 def _choice_combos(page: ParametersPage) -> list[QComboBox]:
     """Plain choice combos only (QgsMapLayerComboBox is a QComboBox subclass)."""
-    return [c for c in page.findChildren(QComboBox) if not isinstance(c, QgsMapLayerComboBox)]
+    return [
+        c
+        for c in page.findChildren(QComboBox)
+        if not isinstance(c, QgsMapLayerComboBox) and _outside_panel(c)
+    ]
 
 
 def test_controls_match_manifest(qgis_app: QgsApplication, manifest) -> None:
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    # fixture: 3 float params + 1 int + 1 choice param, plus 2 spatial inputs.
-    assert len(page.findChildren(QDoubleSpinBox)) == 3
+    # fixture: 3 float params + 1 int + 1 choice param, plus 2 spatial inputs. Widgets inside the
+    # DEM's resample sub-panel are excluded (they are not manifest parameters).
+    assert len(_param_widgets(page, QDoubleSpinBox)) == 3
     assert len(page.findChildren(QSpinBox)) == 1
     assert len(_choice_combos(page)) == 1
     assert len(page.findChildren(QgsMapLayerComboBox)) == 2  # DEM raster + release vector
-    assert page.findChildren(QCheckBox) == []
+    assert _param_widgets(page, QCheckBox) == []
 
 
 def test_defaults_are_seeded_into_state(qgis_app: QgsApplication, manifest) -> None:
@@ -77,8 +105,9 @@ def test_params_and_inputs_are_laid_out_in_groups(qgis_app: QgsApplication, mani
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    titles = [b.title() for b in page.findChildren(QGroupBox)]
-    # declared param groups, then the trailing bucket holding the ungrouped inputs
+    # declared param groups, then the trailing bucket holding the ungrouped inputs (the always-
+    # present release-estimate box is not a manifest group).
+    titles = [b.title() for b in page.findChildren(QGroupBox) if b is not page._estimate_box]
     assert titles == ["Physical parameters", "Numerics", "Parameters"]
 
 
@@ -113,7 +142,7 @@ def test_clears_on_manifest_reset(qgis_app: QgsApplication, manifest) -> None:
     state = StudyState()
     page = ParametersPage(state)
     state.set_manifest(manifest)
-    assert len(page.findChildren(QDoubleSpinBox)) == 3
+    assert len(_param_widgets(page, QDoubleSpinBox)) == 3
     state.set_manifest(None)
     assert page.findChildren(QDoubleSpinBox) == []
     assert page.findChildren(QgsMapLayerComboBox) == []
