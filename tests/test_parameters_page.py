@@ -231,9 +231,10 @@ def test_release_estimate_updates_when_polygon_is_edited_and_committed(
     assert page._area_label is not None
     assert "100.0 m" in page._area_label.text()
 
-    # Edit the geometry and commit; the estimate must refresh without any other interaction.
+    # Editing the geometry refreshes the estimate immediately -- even before committing.
     layer.startEditing()
     fid = next(layer.getFeatures()).id()
     layer.changeGeometry(fid, QgsGeometry.fromWkt("POLYGON((0 0,20 0,20 10,0 10,0 0))"))  # 200 m²
+    assert "200.0 m" in page._area_label.text()  # updated on the live (uncommitted) edit
     layer.commitChanges()
-    assert "200.0 m" in page._area_label.text()
+    assert "200.0 m" in page._area_label.text()  # and still correct after the commit

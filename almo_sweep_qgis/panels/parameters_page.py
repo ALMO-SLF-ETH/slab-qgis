@@ -325,23 +325,38 @@ class ParametersPage(QWidget):
         self._refresh_estimate()
 
     def _listen_for_edits(self, layer: QgsMapLayer | None) -> None:
-        """(Re)connect the selected release-zone layer's commit signals to the estimate refresh."""
+        """(Re)connect the selected release-zone layer's edit signals to the estimate refresh.
+
+        Both live edit-buffer changes (geometry moved, feature added/deleted while editing) and
+        commit/edit-end are wired, so the estimate tracks the polygons as they are drawn, not only
+        once saved.
+        """
         if self._wired_polygon is not None:
-            for signal in (
-                self._wired_polygon.afterCommitChanges,
-                self._wired_polygon.editingStopped,
-            ):
+            for signal in self._edit_signals(self._wired_polygon):
                 with contextlib.suppress(Exception):
-                    signal.disconnect(self._refresh_estimate)
+                    signal.disconnect(self._estimate_dirty)
             self._wired_polygon = None
         if isinstance(layer, QgsVectorLayer):
-            # afterCommitChanges: edits saved while staying in edit mode; editingStopped: toggling
-            # edit mode off (which commits/rolls back). Either way the geometry on disk may differ.
-            with contextlib.suppress(Exception):
-                layer.afterCommitChanges.connect(self._refresh_estimate)
-            with contextlib.suppress(Exception):
-                layer.editingStopped.connect(self._refresh_estimate)
+            for signal in self._edit_signals(layer):
+                with contextlib.suppress(Exception):
+                    signal.connect(self._estimate_dirty)
             self._wired_polygon = layer
+
+    @staticmethod
+    def _edit_signals(layer: QgsVectorLayer) -> tuple:
+        # Live buffer edits (while in edit mode) + save/end-of-edit, so the estimate updates as the
+        # polygons change and again when committed.
+        return (
+            layer.geometryChanged,
+            layer.featureAdded,
+            layer.featuresDeleted,
+            layer.afterCommitChanges,
+            layer.editingStopped,
+        )
+
+    def _estimate_dirty(self, *_args: Any) -> None:
+        """Signal sink that ignores a signal's arguments and refreshes the estimate."""
+        self._refresh_estimate()
 
     # -- release estimate --------------------------------------------------------------
     def _add_estimate_rows(self, form: QFormLayout) -> None:

@@ -170,8 +170,8 @@ no launching QGIS from a terminal.
      **area** and **volume** for the current release is shown as you edit: the polygon's area for a
      `POLYGON` release, `Lx·Ly` / `π·rx·ry` for a `RECTANGLE` / `ELLIPSE`, and (for a `RASTER`
      release) the cell size × the released cells, with volume = area × depth (`h0`) or, for a
-     raster, the summed per-cell depths × cell area. It refreshes automatically when you edit the
-     release polygon and commit/save it.
+     raster, the summed per-cell depths × cell area. It refreshes automatically as you edit the
+     release polygon — live while drawing/moving vertices and again on commit/save.
 2. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
    Progress shows in the panel and in QGIS's task bar. If any chosen input layer isn't saved to
    disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,
