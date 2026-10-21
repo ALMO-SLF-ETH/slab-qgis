@@ -178,7 +178,13 @@ no launching QGIS from a terminal.
    the simulation(s). The progress bar and the line beneath it describe the **whole batch**: the
    current phase (e.g. *Resampling 'dem' to 2 m* or *Running 'run_001'*), elapsed time, an
    estimated time remaining and finish clock time, and — once sweeps run many simulations — a
-   `step N/M` counter and a batch-wide finish estimate. If any chosen input layer isn't saved to
+   `step N/M` counter and a batch-wide finish estimate. The time remaining is estimated from the
+   **recent** pace, not the whole-run average: a simulation reports progress as simulated time,
+   which races ahead early and crawls later, so a plain average would start far too optimistic
+   and keep climbing — the recent-pace estimate tracks the slowdown instead. Early on, while that
+   pace is still ramping and no honest estimate exists yet, the remaining time is shown as a
+   coarse, deliberately-long **range** (e.g. *roughly 2 to 3 min left*) with no finish clock; once
+   the estimate has converged it switches to a sharp countdown and a stable *finish ~HH:MM*. If any chosen input layer isn't saved to
    disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,
    since the model reads inputs from files. Each run's `runspec.json`, `simConfig.json` and
    `result.json` are written into the output folder for provenance. **Stop** cancels the running
