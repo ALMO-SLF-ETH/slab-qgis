@@ -81,6 +81,21 @@ def test_inputs_are_captured_into_state(qgis_app: QgsApplication, manifest) -> N
     assert set(state.input_layers) == {"dem", "release_zones"}
 
 
+def test_inputs_default_to_no_layer(qgis_app: QgsApplication, manifest) -> None:
+    from qgis.core import QgsProject, QgsVectorLayer
+
+    # Even with a matching layer already in the project, inputs start on "no layer" so the user
+    # must pick deliberately.
+    existing = QgsVectorLayer("Polygon?crs=EPSG:2056", "already_loaded", "memory")
+    QgsProject.instance().addMapLayer(existing)
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    assert all(combo.currentLayer() is None for combo in page._input_combos.values())
+    assert all(v is None for v in state.input_layers.values())
+    QgsProject.instance().removeMapLayer(existing.id())
+
+
 def test_editing_spinbox_updates_state_and_clamps(qgis_app: QgsApplication, manifest) -> None:
     state = StudyState()
     state.set_manifest(manifest)
@@ -238,3 +253,26 @@ def test_release_estimate_updates_when_polygon_is_edited_and_committed(
     assert "200.0 m" in page._area_label.text()  # updated on the live (uncommitted) edit
     layer.commitChanges()
     assert "200.0 m" in page._area_label.text()  # and still correct after the commit
+
+
+@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+def test_deleting_selected_layer_reverts_to_no_layer(qgis_app: QgsApplication) -> None:
+    from qgis.core import QgsProject, QgsVectorLayer
+
+    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+
+    layer = QgsVectorLayer("Polygon?crs=EPSG:2056", "rel", "memory")
+    QgsProject.instance().addMapLayer(layer)
+    combo = page._input_combos["release_zones"]
+    combo.setLayer(layer)
+    page._set_param("release_type", "POLYGON")
+    assert combo.currentLayer() is layer
+
+    # Removing the selected layer must revert to "no layer" without touching the dangling layer.
+    QgsProject.instance().removeMapLayer(layer.id())
+    assert combo.currentLayer() is None
+    assert state.input_layers["release_zones"] is None
+    assert page._area_label is not None and page._area_label.text() == "—"

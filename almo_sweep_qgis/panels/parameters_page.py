@@ -121,8 +121,21 @@ class ParametersPage(QWidget):
         self._area_label: QLabel | None = None
         self._volume_label: QLabel | None = None
 
+        # When a selected layer is deleted, fall back to "no layer" (before QGIS destroys it, so we
+        # never touch a dangling layer) -- the user must then re-pick a valid one.
+        with contextlib.suppress(Exception):
+            QgsProject.instance().layersWillBeRemoved.connect(self._on_layers_will_be_removed)
+
         state.manifestChanged.connect(self._rebuild)
         self._rebuild(state.manifest)
+
+    def _on_layers_will_be_removed(self, layer_ids: Any) -> None:
+        """Reset any input whose selected layer is about to be removed back to 'no layer'."""
+        removed = set(layer_ids)
+        for combo in self._input_combos.values():
+            layer = combo.currentLayer()
+            if layer is not None and layer.id() in removed:
+                combo.setLayer(None)  # fires layerChanged -> clears state and edit listeners
 
     def _rebuild(self, manifest: Any | None) -> None:
         while self._groups_layout.count():
@@ -282,10 +295,12 @@ class ParametersPage(QWidget):
         """
         combo = QgsMapLayerComboBox()
         combo.setFilters(_filter_for(spec))
-        if not spec.required:
-            combo.setAllowEmptyLayer(True)
+        # Always offer "no layer" and start on it, so the user picks the layer deliberately rather
+        # than silently running with whatever QGIS happened to auto-select.
+        combo.setAllowEmptyLayer(True)
         combo.setToolTip(spec.description or "")
         combo.layerChanged.connect(lambda layer, n=name: self._set_input(n, layer))
+        combo.setLayer(None)
 
         browse = QToolButton()
         browse.setText("…")
@@ -332,9 +347,12 @@ class ParametersPage(QWidget):
         once saved.
         """
         if self._wired_polygon is not None:
-            for signal in self._edit_signals(self._wired_polygon):
-                with contextlib.suppress(Exception):
-                    signal.disconnect(self._estimate_dirty)
+            # The previous layer may already be deleted (C++ object gone) -- e.g. it was removed
+            # from the project. Accessing its signals then raises, so guard the whole disconnect.
+            with contextlib.suppress(Exception):
+                for signal in self._edit_signals(self._wired_polygon):
+                    with contextlib.suppress(Exception):
+                        signal.disconnect(self._estimate_dirty)
             self._wired_polygon = None
         if isinstance(layer, QgsVectorLayer):
             for signal in self._edit_signals(layer):
