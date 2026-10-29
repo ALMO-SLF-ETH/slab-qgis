@@ -33,6 +33,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapLayerComboBox
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -44,13 +45,15 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from almo_sweep_qgis import estimate
+from almo_sweep_qgis import estimate, sweep_plan
 from almo_sweep_qgis.dem.resample import (
     RESAMPLE_METHODS,
     default_resampled_path,
@@ -98,7 +101,9 @@ class ParametersPage(QWidget):
         self._state = state
         self._rows: list[_Row] = []
         self._input_combos: dict[str, QgsMapLayerComboBox] = {}
+        self._numeric_fields: dict[str, _NumericParamField] = {}  # sweepable numeric params
         self._wired_polygon: QgsVectorLayer | None = None  # release layer we listen to for edits
+        self._building = False  # suppress sweep sync while (re)building the form
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -108,11 +113,33 @@ class ParametersPage(QWidget):
         self._empty.setEnabled(False)
         root.addWidget(self._empty)
 
-        self._groups_host = QWidget(self)
+        # Parameter-sweep toggle: turning it on reveals a "sweep" box on each (currently visible)
+        # sweepable numeric parameter and the sweep-method controls below, so everything about the
+        # study lives on this one page.
+        self._sweep_toggle = QCheckBox("Enable parameter sweep (choose which parameters to vary)")
+        self._sweep_toggle.setObjectName("sweepEnable")
+        self._sweep_toggle.setToolTip("Vary selected parameters across many simulations.")
+        self._sweep_toggle.toggled.connect(self._on_sweep_toggle)
+        root.addWidget(self._sweep_toggle)
+
+        # The sweep *method* (scheme + steps/samples/seed) and the live run count: shown only while
+        # the sweep is enabled. Kept outside the scroll area so it stays visible.
+        self._method_box = self._build_method_box()
+        root.addWidget(self._method_box)
+        self._summary = QLabel("")
+        self._summary.setWordWrap(True)
+        self._summary.setVisible(False)
+        root.addWidget(self._summary)
+
+        # The parameters/inputs list can be long and vertical space is limited, so it scrolls.
+        self._groups_host = QWidget()
         self._groups_layout = QVBoxLayout(self._groups_host)
         self._groups_layout.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(self._groups_host)
-        root.addStretch(1)
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setWidget(self._groups_host)
+        root.addWidget(self._scroll, 1)
 
         # Live release-size estimate labels, (re)created inside the release group during _rebuild;
         # None for a model that has no release section.
@@ -146,7 +173,90 @@ class ParametersPage(QWidget):
             if layer is not None and layer.id() in removed:
                 combo.setLayer(None)  # fires layerChanged -> clears state and edit listeners
 
+    # -- sweep method (scheme + steps/samples/seed) ------------------------------------
+    def _build_method_box(self) -> QGroupBox:
+        box = QGroupBox("Sweep method")
+        box.setObjectName("sweepMethodBox")
+        outer = QVBoxLayout(box)
+
+        scheme_row = QHBoxLayout()
+        scheme_row.addWidget(QLabel("Scheme"))
+        self._scheme_combo = QComboBox()
+        for key, label in sweep_plan.SCHEMES:
+            self._scheme_combo.addItem(label, key)
+        self._scheme_combo.setToolTip(
+            "Grid: every combination of equal steps (deterministic). "
+            "Latin hypercube: stratified, space-filling. Monte Carlo: random draws."
+        )
+        self._scheme_combo.currentIndexChanged.connect(self._on_scheme_changed)
+        scheme_row.addWidget(self._scheme_combo, 1)
+        outer.addLayout(scheme_row)
+
+        self._scheme_stack = QStackedWidget()
+        self._scheme_stack.addWidget(self._build_grid_controls())  # 0: grid
+        self._scheme_stack.addWidget(self._build_sampler_controls())  # 1: LHS / Monte Carlo
+        outer.addWidget(self._scheme_stack)
+        return box
+
+    def _build_grid_controls(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        form.setContentsMargins(0, 0, 0, 0)
+        self._steps_spin = QSpinBox()
+        self._steps_spin.setRange(1, 1000)
+        self._steps_spin.setValue(sweep_plan._DEFAULT_STEPS)
+        self._steps_spin.setToolTip("Default number of grid points per parameter.")
+        self._steps_spin.valueChanged.connect(self._on_method_changed)
+        form.addRow("Steps per parameter", self._steps_spin)
+        self._spacing_combo = QComboBox()
+        self._spacing_combo.addItem("Linear", "linear")
+        self._spacing_combo.addItem("Logarithmic", "log")
+        self._spacing_combo.setToolTip("Logarithmic spacing needs a strictly positive range.")
+        self._spacing_combo.currentIndexChanged.connect(self._on_method_changed)
+        form.addRow("Spacing", self._spacing_combo)
+        return page
+
+    def _build_sampler_controls(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        form.setContentsMargins(0, 0, 0, 0)
+        self._samples_spin = QSpinBox()
+        self._samples_spin.setRange(1, 1_000_000)
+        self._samples_spin.setValue(50)
+        self._samples_spin.setToolTip("Number of simulations to draw.")
+        self._samples_spin.valueChanged.connect(self._on_method_changed)
+        form.addRow("Samples", self._samples_spin)
+
+        seed_row = QHBoxLayout()
+        self._seed_mode = QComboBox()
+        self._seed_mode.addItem("Random each run", False)
+        self._seed_mode.addItem("Fixed seed", True)
+        self._seed_mode.setToolTip("A fixed seed makes the draw reproducible across runs.")
+        self._seed_mode.currentIndexChanged.connect(self._on_seed_mode_changed)
+        self._seed_spin = QSpinBox()
+        self._seed_spin.setRange(0, 2_147_483_647)
+        self._seed_spin.setValue(0)
+        self._seed_spin.setEnabled(False)
+        self._seed_spin.valueChanged.connect(self._on_method_changed)
+        seed_row.addWidget(self._seed_mode)
+        seed_row.addWidget(self._seed_spin, 1)
+        form.addRow("Seed", seed_row)
+        return page
+
+    def _on_scheme_changed(self, _index: int = 0) -> None:
+        scheme = self._scheme_combo.currentData() or "grid"
+        self._scheme_stack.setCurrentIndex(0 if scheme == "grid" else 1)
+        self._sync_sweep()
+
+    def _on_seed_mode_changed(self, _index: int) -> None:
+        self._seed_spin.setEnabled(bool(self._seed_mode.currentData()))
+        self._sync_sweep()
+
+    def _on_method_changed(self, *_args: Any) -> None:
+        self._sync_sweep()
+
     def _rebuild(self, manifest: Any | None) -> None:
+        self._building = True
         while self._groups_layout.count():
             item = self._groups_layout.takeAt(0)
             widget = item.widget()
@@ -155,13 +265,24 @@ class ParametersPage(QWidget):
                 widget.deleteLater()
         self._rows.clear()
         self._input_combos.clear()
+        self._numeric_fields.clear()
         self._area_label = None  # recreated below only if there is a release section
         self._volume_label = None
 
         has_content = manifest is not None and (manifest.params or manifest.inputs)
         self._empty.setVisible(not has_content)
-        self._groups_host.setVisible(bool(has_content))
+        self._scroll.setVisible(bool(has_content))
+        # A fresh model starts with the sweep off; the enable toggle only shows with content, and
+        # the method box + summary stay hidden until the sweep is enabled.
+        self._sweep_toggle.blockSignals(True)
+        self._sweep_toggle.setChecked(False)
+        self._sweep_toggle.blockSignals(False)
+        self._sweep_toggle.setVisible(bool(has_content))
+        self._scheme_combo.setCurrentIndex(0)
+        self._method_box.setVisible(False)
+        self._summary.setVisible(False)
         if not has_content:
+            self._building = False
             return
 
         for group, params, inputs in manifest.grouped_items():
@@ -172,8 +293,7 @@ class ParametersPage(QWidget):
                 box.setToolTip(group.description)
             form = QFormLayout(box)
             for spec in params:  # parameters first, then the inputs that relate to them
-                field = self._make_param_control(spec.name, spec)
-                self._add_row(form, box, _param_label(spec), field, spec)
+                self._add_param_control(form, box, spec)
                 self._state.param_values[spec.name] = spec.default
             for spec in inputs:
                 field, combo = self._make_input_control(spec.name, spec)
@@ -192,6 +312,9 @@ class ParametersPage(QWidget):
 
         self._apply_visibility()
         self._refresh_estimate()
+        self._building = False
+        self._refresh_scheme_mode()  # align each sweep editor with the current scheme
+        self._sync_sweep()  # publish the (initially empty, disabled) sweep config
 
     def _add_row(
         self, form: QFormLayout, box: QGroupBox, label: QWidget, field: QWidget, spec: Any
@@ -231,6 +354,25 @@ class ParametersPage(QWidget):
             row.field.setVisible(visible)
 
     # -- parameter controls ------------------------------------------------------------
+    def _add_param_control(self, form: QFormLayout, box: QGroupBox, spec: Any) -> None:
+        """Add a parameter's row. A sweepable numeric parameter becomes a full-width
+        :class:`_NumericParamField` (sweep checkbox on the left, value on the right, inline range
+        editor, tinted when swept); every other parameter is a plain label + control row."""
+        ptype = str(spec.type)
+        if ptype in ("float", "int") and getattr(spec, "sweepable", False):
+            spin = (
+                self._float_control(spec.name, spec)
+                if ptype == "float"
+                else (self._int_control(spec.name, spec))
+            )
+            field = _NumericParamField(spec, _param_label(spec), _with_unit(spin, spec.unit), spin)
+            field.changed.connect(self._sync_sweep)
+            self._numeric_fields[spec.name] = field
+            self._add_full_row(form, box, field, spec)
+        else:
+            control = self._make_param_control(spec.name, spec)
+            self._add_row(form, box, _param_label(spec), control, spec)
+
     def _make_param_control(self, name: str, spec: Any) -> QWidget:
         ptype = str(spec.type)
         if ptype == "float":
@@ -293,6 +435,63 @@ class ParametersPage(QWidget):
         self._apply_visibility()
         # ...and may change the release size (shape, depth, geometry).
         self._refresh_estimate()
+        # A newly-hidden parameter must drop out of the sweep; a newly-shown one may join it.
+        self._sync_sweep()
+
+    # -- parameter sweep ---------------------------------------------------------------
+    def _on_sweep_toggle(self, on: bool) -> None:
+        self._method_box.setVisible(on)
+        self._summary.setVisible(on)
+        for field in self._numeric_fields.values():
+            field.set_sweep_mode(on)
+        self._sync_sweep()
+
+    def _sync_sweep(self) -> None:
+        """Publish the whole sweep config (enable, per-parameter selection, and method) to state.
+
+        Only *currently visible* swept parameters are included, so a parameter hidden by a
+        ``visible_when`` (e.g. a friction coefficient for the wrong law) never enters the sweep."""
+        if self._building:
+            return
+        enabled = self._sweep_toggle.isChecked()
+        current = self._state.param_values
+        params: dict[str, Any] = {}
+        if enabled:
+            for name, field in self._numeric_fields.items():
+                if field.is_swept() and field.spec.is_visible(current):
+                    params[name] = field.sweep_entry()
+        seed = int(self._seed_spin.value()) if self._seed_mode.currentData() else None
+        self._state.sweep = {
+            "enabled": enabled,
+            "scheme": self._scheme_combo.currentData() or "grid",
+            "n_samples": int(self._samples_spin.value()),
+            "steps": int(self._steps_spin.value()),
+            "spacing": self._spacing_combo.currentData() or "linear",
+            "seed": seed,
+            "params": params,
+        }
+        self._refresh_scheme_mode()
+        self._refresh_summary()
+        self._state.sweepChanged.emit()
+
+    def _refresh_scheme_mode(self) -> None:
+        """Show each sweep editor's per-parameter 'Steps' field only for the grid scheme."""
+        grid = self._state.sweep.get("scheme", "grid") == "grid"
+        for field in self._numeric_fields.values():
+            field.set_grid_mode(grid)
+
+    def _refresh_summary(self) -> None:
+        sweep = self._state.sweep
+        text = sweep_plan.summary_text(sweep)
+        count = sweep_plan.projected_count(sweep)
+        if sweep.get("enabled") and count > sweep_plan.LARGE_SWEEP:
+            self._summary.setText(
+                f"⚠ {text} Each is a full model run, so this may take a very long time."
+            )
+            self._summary.setStyleSheet("color: #b36b00;")
+        else:
+            self._summary.setText(text)
+            self._summary.setStyleSheet("")
 
     # -- input controls ----------------------------------------------------------------
     def _make_input_control(self, name: str, spec: Any) -> tuple[QWidget, QgsMapLayerComboBox]:
@@ -695,3 +894,196 @@ class _ResamplePanel(QWidget):
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
+
+
+class _SweepEditor(QWidget):
+    """Range + distribution editor for one swept numeric parameter (Uniform or Normal).
+
+    Emits :attr:`changed` on any edit. :meth:`entry` returns the plain-data config consumed by
+    :mod:`~almo_sweep_qgis.sweep_plan` (``{"dist": "uniform", "low", "high"}`` or
+    ``{"dist": "normal", "mean", "std", "min", "max"}``, plus a grid ``steps`` override)."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, spec: Any, base_value: float, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._spec = spec
+        self._grid = True
+        lo, hi = _numeric_bounds(spec)
+
+        form = QFormLayout(self)
+        form.setContentsMargins(18, 0, 0, 0)  # indent under the value + "Sweep" checkbox
+
+        self._dist = QComboBox()
+        self._dist.addItem("Uniform", "uniform")
+        self._dist.addItem("Normal", "normal")
+        self._dist.setToolTip("Weight profile: Uniform (equal) or Normal (Gaussian).")
+        self._dist.currentIndexChanged.connect(self._on_dist)
+        form.addRow("Distribution", self._dist)
+
+        self._low = _editor_spin(lo, hi, lo)
+        self._high = _editor_spin(lo, hi, hi)
+        self._mean = _editor_spin(lo, hi, base_value)
+        span = (hi - lo) if (hi - lo) > 0 else (abs(base_value) or 1.0)
+        self._std = _editor_spin(0.0, _FLOAT_LIMIT, round(span / 6.0, 6))
+        for spin in (self._low, self._high, self._mean, self._std):
+            spin.valueChanged.connect(lambda _v: self.changed.emit())
+
+        self._uniform_row = _pair("Low", self._low, "High", self._high)
+        self._normal_row = _pair("Mean", self._mean, "Std", self._std)
+        form.addRow(self._uniform_row)
+        form.addRow(self._normal_row)
+
+        self._steps = QSpinBox()
+        self._steps.setRange(0, 1000)
+        self._steps.setValue(0)
+        self._steps.setSpecialValueText("(default)")  # 0 -> use the sweep's default steps
+        self._steps.setToolTip("Grid points for this parameter (0 uses the sweep default).")
+        self._steps.valueChanged.connect(lambda _v: self.changed.emit())
+        self._steps_label = QLabel("Steps")
+        form.addRow(self._steps_label, self._steps)
+
+        self._apply_dist_visibility()
+
+    def set_grid_mode(self, on: bool) -> None:
+        """Show the per-parameter 'Steps' field only for the grid scheme."""
+        self._grid = on
+        self._steps.setVisible(on)
+        self._steps_label.setVisible(on)
+
+    def entry(self) -> dict[str, Any]:
+        if self._dist.currentData() == "normal":
+            data: dict[str, Any] = {
+                "dist": "normal",
+                "mean": float(self._mean.value()),
+                "std": float(self._std.value()),
+                "min": _opt(self._spec.min),
+                "max": _opt(self._spec.max),
+            }
+        else:
+            data = {
+                "dist": "uniform",
+                "low": float(self._low.value()),
+                "high": float(self._high.value()),
+            }
+        if self._grid and self._steps.value() > 0:
+            data["steps"] = int(self._steps.value())
+        return data
+
+    def _on_dist(self, _index: int) -> None:
+        self._apply_dist_visibility()
+        self.changed.emit()
+
+    def _apply_dist_visibility(self) -> None:
+        is_normal = self._dist.currentData() == "normal"
+        self._uniform_row.setVisible(not is_normal)
+        self._normal_row.setVisible(is_normal)
+
+
+class _NumericParamField(QWidget):
+    """A full-width row for a sweepable numeric parameter: a 'sweep' checkbox on the **left**, then
+    the label and value control, then an inline range/distribution editor shown when swept.
+
+    Off (sweep toggle off), the checkbox is hidden and it reads as a normal labelled value. When
+    the toggle is on, the checkbox appears; ticking it reveals the editor and tints the row's
+    background so swept parameters stand out. ``spec`` is kept so the page can test the parameter's
+    ``visible_when`` before including it in the sweep."""
+
+    changed = pyqtSignal()
+
+    def __init__(
+        self,
+        spec: Any,
+        label: QWidget,
+        control: QWidget,
+        spin: QWidget,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.spec = spec
+        self._sweep_mode = False
+        self.setObjectName("numericParamField")
+        # A plain QWidget ignores a stylesheet background unless it paints a styled background.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        box = QVBoxLayout(self)
+        box.setContentsMargins(4, 2, 4, 2)
+        box.setSpacing(2)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        self._check = QCheckBox()
+        self._check.setObjectName("sweepSelect")
+        self._check.setToolTip("Vary this parameter across the sweep instead of a fixed value.")
+        self._check.setVisible(False)
+        self._check.toggled.connect(self._on_toggle)
+        top.addWidget(self._check, 0)
+        top.addWidget(label, 0)
+        top.addWidget(control, 1)
+        box.addLayout(top)
+
+        self._editor = _SweepEditor(spec, float(spin.value()))
+        self._editor.setVisible(False)
+        self._editor.changed.connect(self.changed)
+        box.addWidget(self._editor)
+
+    def set_sweep_mode(self, on: bool) -> None:
+        self._sweep_mode = on
+        self._check.setVisible(on)
+        self._editor.setVisible(on and self._check.isChecked())
+        self._apply_tint()
+
+    def set_grid_mode(self, on: bool) -> None:
+        self._editor.set_grid_mode(on)
+
+    def is_swept(self) -> bool:
+        return self._sweep_mode and self._check.isChecked()
+
+    def sweep_entry(self) -> dict[str, Any]:
+        return self._editor.entry()
+
+    def _on_toggle(self, on: bool) -> None:
+        self._editor.setVisible(self._sweep_mode and on)
+        self._apply_tint()
+        self.changed.emit()
+
+    def _apply_tint(self) -> None:
+        # A translucent amber highlight with a left accent bar when this parameter is swept, so it
+        # is easy to spot and works in both light and dark themes. Scoped to this widget's own id so
+        # it does not recolour the child spin boxes.
+        if self.is_swept():
+            self.setStyleSheet(
+                "QWidget#numericParamField { background-color: rgba(240, 180, 40, 0.32); "
+                "border-left: 3px solid rgba(210, 140, 10, 0.95); border-radius: 3px; }"
+            )
+        else:
+            self.setStyleSheet("")
+
+
+def _numeric_bounds(spec: Any) -> tuple[float, float]:
+    lo = float(spec.min) if spec.min is not None else -_FLOAT_LIMIT
+    hi = float(spec.max) if spec.max is not None else _FLOAT_LIMIT
+    return lo, hi
+
+
+def _editor_spin(lo: float, hi: float, value: float) -> QDoubleSpinBox:
+    spin = QDoubleSpinBox()
+    spin.setDecimals(6)
+    spin.setRange(lo, hi)
+    spin.setValue(max(lo, min(hi, value)))
+    return spin
+
+
+def _pair(a_label: str, a: QWidget, b_label: str, b: QWidget) -> QWidget:
+    container = QWidget()
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(QLabel(a_label))
+    layout.addWidget(a, 1)
+    layout.addWidget(QLabel(b_label))
+    layout.addWidget(b, 1)
+    return container
+
+
+def _opt(value: Any) -> float | None:
+    return None if value is None else float(value)

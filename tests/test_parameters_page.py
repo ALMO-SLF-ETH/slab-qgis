@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.parameters_page import ParametersPage, _ResamplePanel
+from almo_sweep_qgis.panels.parameters_page import ParametersPage, _ResamplePanel, _SweepEditor
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
 from qgis.gui import QgsMapLayerComboBox
@@ -28,18 +28,26 @@ def manifest(dampm_manifest_path: Path):
 
 
 def _outside_panel(widget: QWidget) -> bool:
-    """True if the widget is not inside a raster input's resample sub-panel."""
+    """True if the widget is a plain parameter/input control: not inside a resample sub-panel, a
+    parameter's sweep editor, or the sweep-method box."""
     parent = widget.parent()
     while parent is not None:
-        if isinstance(parent, _ResamplePanel):
+        if isinstance(parent, (_ResamplePanel, _SweepEditor)):
+            return False
+        if parent.objectName() == "sweepMethodBox":
             return False
         parent = parent.parent()
     return True
 
 
 def _param_widgets(page: ParametersPage, cls: type) -> list:
-    """Widgets of a type that belong to the parameter/input form (not a resample panel)."""
-    return [w for w in page.findChildren(cls) if _outside_panel(w)]
+    """The parameter/input *value* controls of a type: not in a resample panel or sweep editor,
+    and not the sweep checkboxes/toggle (object name starts with 'sweep')."""
+    return [
+        w
+        for w in page.findChildren(cls)
+        if _outside_panel(w) and not w.objectName().startswith("sweep")
+    ]
 
 
 def _choice_combos(page: ParametersPage) -> list[QComboBox]:
@@ -58,10 +66,10 @@ def test_controls_match_manifest(qgis_app: QgsApplication, manifest) -> None:
     # fixture: 3 float params + 1 int + 1 choice param, plus 2 spatial inputs. Widgets inside the
     # DEM's resample sub-panel are excluded (they are not manifest parameters).
     assert len(_param_widgets(page, QDoubleSpinBox)) == 3
-    assert len(page.findChildren(QSpinBox)) == 1
+    assert len(_param_widgets(page, QSpinBox)) == 1
     assert len(_choice_combos(page)) == 1
     assert len(page.findChildren(QgsMapLayerComboBox)) == 2  # DEM raster + release vector
-    assert _param_widgets(page, QCheckBox) == []
+    assert _param_widgets(page, QCheckBox) == []  # no bool params (sweep checkboxes excluded)
 
 
 def test_defaults_are_seeded_into_state(qgis_app: QgsApplication, manifest) -> None:
@@ -100,7 +108,7 @@ def test_editing_spinbox_updates_state_and_clamps(qgis_app: QgsApplication, mani
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    spin = next(sb for sb in page.findChildren(QDoubleSpinBox) if sb.maximum() == 60.0)
+    spin = next(sb for sb in _param_widgets(page, QDoubleSpinBox) if sb.maximum() == 60.0)
     spin.setValue(45.0)
     assert state.param_values["friction_angle"] == 45.0
     spin.setValue(999.0)  # manifest max is 60 -> widget clamps
@@ -120,7 +128,7 @@ def test_params_and_inputs_are_laid_out_in_groups(qgis_app: QgsApplication, mani
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    titles = [b.title() for b in page.findChildren(QGroupBox)]
+    titles = [b.title() for b in page.findChildren(QGroupBox) if b.objectName() != "sweepMethodBox"]
     # declared param groups, then the trailing bucket holding the ungrouped inputs (this fixture
     # has no release section, so no release-estimate rows are added)
     assert titles == ["Physical parameters", "Numerics", "Parameters"]
@@ -130,7 +138,7 @@ def test_dependent_param_visibility_follows_controller(qgis_app: QgsApplication,
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
-    spin = page.findChildren(QSpinBox)[0]  # rk4_stages, visible_when integrator == "rk4"
+    spin = _param_widgets(page, QSpinBox)[0]  # rk4_stages, visible_when integrator == "rk4"
     assert not spin.isHidden()
     combo = _choice_combos(page)[0]
     combo.setCurrentIndex(combo.findText("euler"))
@@ -161,6 +169,132 @@ def test_clears_on_manifest_reset(qgis_app: QgsApplication, manifest) -> None:
     state.set_manifest(None)
     assert page.findChildren(QDoubleSpinBox) == []
     assert page.findChildren(QgsMapLayerComboBox) == []
+
+
+# --- parameter sweep (toggle + per-parameter selection live here) ---------------------
+def test_sweep_toggle_and_selection_write_state(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    assert state.sweep["enabled"] is False
+    assert set(page._numeric_fields) == {"friction_angle", "release_depth", "density"}
+
+    page._sweep_toggle.setChecked(True)
+    assert state.sweep["enabled"] is True
+    assert state.sweep["params"] == {}  # nothing ticked yet
+
+    field = page._numeric_fields["density"]
+    field._check.setChecked(True)
+    field._editor._low.setValue(1800.0)
+    field._editor._high.setValue(2200.0)
+    assert state.sweep["params"] == {"density": {"dist": "uniform", "low": 1800.0, "high": 2200.0}}
+
+
+def test_only_visible_sweepable_params_enter_the_sweep(qgis_app: QgsApplication) -> None:
+    # A sweepable parameter hidden by a visible_when must not be offered to / kept in the sweep.
+    from almo_sweep.contracts import parse_manifest
+
+    m = parse_manifest(
+        {
+            "model": {"name": "m", "version": "1"},
+            "invocation": {"command": ["x"]},
+            "params": {
+                "law": {"type": "choice", "default": "A", "choices": ["A", "B"]},
+                "coef": {
+                    "type": "float",
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 10.0,
+                    "sweepable": True,
+                    "visible_when": [{"param": "law", "in": ["A"]}],
+                },
+            },
+            "outputs": {"g": {"kind": "raster"}},
+        }
+    )
+    state = StudyState()
+    state.set_manifest(m)
+    page = ParametersPage(state)
+    page._sweep_toggle.setChecked(True)
+    page._numeric_fields["coef"]._check.setChecked(True)
+    assert "coef" in state.sweep["params"]  # law == A -> coef visible, in the sweep
+
+    page._set_param("law", "B")  # hides coef (visible_when A)
+    assert state.sweep["params"] == {}  # dropped from the sweep while hidden
+    page._set_param("law", "A")  # shown again -> re-enters (still ticked)
+    assert "coef" in state.sweep["params"]
+
+
+# --- sweep method (scheme + steps/samples/seed, now on this page) ---------------------
+def test_method_box_hidden_until_sweep_enabled(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    assert not page._method_box.isVisibleTo(page)  # hidden while the sweep is off
+    page._sweep_toggle.setChecked(True)
+    assert page._method_box.isVisibleTo(page)
+
+
+def test_scheme_and_settings_write_state(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    page._sweep_toggle.setChecked(True)
+    page._scheme_combo.setCurrentIndex(page._scheme_combo.findData("grid"))
+    page._steps_spin.setValue(6)
+    assert state.sweep["scheme"] == "grid" and state.sweep["steps"] == 6
+
+
+def test_grid_summary_counts_the_product(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    page._sweep_toggle.setChecked(True)
+    page._steps_spin.setValue(4)
+    page._numeric_fields["friction_angle"]._check.setChecked(True)
+    page._numeric_fields["density"]._check.setChecked(True)
+    assert "16" in page._summary.text()  # 4 x 4
+
+
+def test_scheme_switch_toggles_stack_and_grid_steps(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    page._sweep_toggle.setChecked(True)
+    field = page._numeric_fields["friction_angle"]
+
+    page._scheme_combo.setCurrentIndex(page._scheme_combo.findData("monte_carlo"))
+    page._samples_spin.setValue(30)
+    assert state.sweep["scheme"] == "monte_carlo" and state.sweep["n_samples"] == 30
+    assert page._scheme_stack.currentIndex() == 1  # sampler controls
+    assert not field._editor._steps.isVisibleTo(field._editor)  # per-param steps hidden for MC
+
+    page._scheme_combo.setCurrentIndex(page._scheme_combo.findData("grid"))
+    assert page._scheme_stack.currentIndex() == 0  # grid controls
+    assert field._editor._steps.isVisibleTo(field._editor)
+
+
+def test_seed_only_set_when_fixed(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    page._sweep_toggle.setChecked(True)
+    page._scheme_combo.setCurrentIndex(page._scheme_combo.findData("monte_carlo"))
+    assert state.sweep["seed"] is None  # "random each run" by default
+    page._seed_mode.setCurrentIndex(page._seed_mode.findData(True))
+    page._seed_spin.setValue(123)
+    assert state.sweep["seed"] == 123
+
+
+def test_swept_field_is_tinted(qgis_app: QgsApplication, manifest) -> None:
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+    page._sweep_toggle.setChecked(True)
+    field = page._numeric_fields["friction_angle"]
+    assert field.styleSheet() == ""  # not swept yet -> no highlight
+    field._check.setChecked(True)
+    assert "background-color" in field.styleSheet()  # swept -> tinted
 
 
 # --- conditional input visibility against the real dampm manifest ---------------------

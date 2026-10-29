@@ -3,10 +3,11 @@
 The sections mirror the study workflow end to end:
 
 1. **Parameters** -- the model's inputs *and* parameters, built from its manifest (the DEM and
-   release-zone layers are chosen here, beside the parameters that select them).
-2. **Study**      -- deterministic run or a probabilistic sweep (distributions, samples).
-3. **Run**        -- name, output folder, output selection, launch and monitor.
-4. **Results**    -- browse and inspect the runs produced.
+   release-zone layers are chosen here). It is also the whole study page: a sweep is enabled here,
+   the parameters to vary (each with a range + distribution) are picked beside their values, and
+   the sweep method (scheme + steps/samples/seed) and live simulation count live here too.
+2. **Run**        -- name, output folder, output selection, launch and monitor.
+3. **Results**    -- browse and inspect the runs produced.
 
 The model is chosen at the top from a **persistent list** of registered models (stored in
 :class:`QgsSettings`, so it survives restarts); "Add…" registers a new one from its manifest
@@ -42,7 +43,7 @@ from almo_sweep_qgis.panels.settings_dialog import RuntimeSettingsDialog
 from almo_sweep_qgis.state import StudyState
 
 #: Ordered section titles. The order is the intended top-to-bottom workflow.
-PAGE_TITLES = ("Parameters", "Study", "Run", "Results")
+PAGE_TITLES = ("Parameters", "Run", "Results")
 
 
 class MainPanel(QgsDockWidget):
@@ -66,10 +67,9 @@ class MainPanel(QgsDockWidget):
 
         self._stack = QStackedWidget(container)
         # Pages are added in PAGE_TITLES order; real pages replace placeholders as built.
-        self._stack.addWidget(ParametersPage(self.state))  # 0: Parameters (inputs + params)
-        self._stack.addWidget(_placeholder_page("Study"))  # 1: Study
-        self._stack.addWidget(RunPage(self.state))  # 2: Run
-        self._stack.addWidget(_placeholder_page("Results"))  # 3: Results
+        self._stack.addWidget(ParametersPage(self.state))  # 0: Parameters (inputs, params, sweep)
+        self._stack.addWidget(RunPage(self.state))  # 1: Run
+        self._stack.addWidget(_placeholder_page("Results"))  # 2: Results
 
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
         self._nav.setCurrentRow(0)

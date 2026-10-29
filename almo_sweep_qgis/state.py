@@ -12,6 +12,8 @@ from typing import Any
 
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
+from almo_sweep_qgis.sweep_plan import default_sweep
+
 
 class StudyState(QObject):
     """The mutable state of the study the user is assembling."""
@@ -24,6 +26,11 @@ class StudyState(QObject):
     #: (e.g. the Run page resamples a raster at launch), so the Parameters page re-syncs its combo.
     inputLayerReplaced = pyqtSignal(str, object)
 
+    #: Emitted whenever the sweep config (:attr:`sweep`) changes. The Parameters page authors the
+    #: whole sweep (enable toggle, per-parameter selection, and the scheme/sampling method) and
+    #: emits this so other pages (e.g. a future results view) can react.
+    sweepChanged = pyqtSignal()
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._manifest: Any | None = None
@@ -35,6 +42,9 @@ class StudyState(QObject):
         #: input name -> a pending resample request {"resolution", "alg", "out_path"} armed via the
         #: "Resample to" control but not yet applied; the Run page applies these at launch.
         self.resample_requests: dict[str, dict[str, Any]] = {}
+        #: The study (sweep) config authored on the Parameters page: a plain-data dict (see
+        #: :func:`~almo_sweep_qgis.sweep_plan.default_sweep`). The Run page reads it at launch.
+        self.sweep: dict[str, Any] = default_sweep()
 
     @property
     def manifest(self) -> Any | None:
@@ -51,4 +61,6 @@ class StudyState(QObject):
         self.input_layers = {}
         self.param_values = {}
         self.resample_requests = {}
+        # A new model has different parameters, so any previous sweep selection is meaningless.
+        self.sweep = default_sweep()
         self.manifestChanged.emit(manifest)
