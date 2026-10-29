@@ -185,6 +185,10 @@ def test_sweep_toggle_and_selection_write_state(qgis_app: QgsApplication, manife
 
     field = page._numeric_fields["density"]
     field._check.setChecked(True)
+    assert field._editor._dist.currentData() == "normal"  # Normal is the default profile
+    assert not field._control.isVisibleTo(field)  # the fixed-value control is hidden while swept
+    # Switch to Uniform and set its range.
+    field._editor._dist.setCurrentIndex(field._editor._dist.findData("uniform"))
     field._editor._low.setValue(1800.0)
     field._editor._high.setValue(2200.0)
     assert state.sweep["params"] == {"density": {"dist": "uniform", "low": 1800.0, "high": 2200.0}}

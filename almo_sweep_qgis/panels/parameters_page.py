@@ -917,6 +917,7 @@ class _SweepEditor(QWidget):
         self._dist = QComboBox()
         self._dist.addItem("Uniform", "uniform")
         self._dist.addItem("Normal", "normal")
+        self._dist.setCurrentIndex(self._dist.findData("normal"))  # Normal is the default profile
         self._dist.setToolTip("Weight profile: Uniform (equal) or Normal (Gaussian).")
         self._dist.currentIndexChanged.connect(self._on_dist)
         form.addRow("Distribution", self._dist)
@@ -1019,6 +1020,7 @@ class _NumericParamField(QWidget):
         self._check.toggled.connect(self._on_toggle)
         top.addWidget(self._check, 0)
         top.addWidget(label, 0)
+        self._control = control
         top.addWidget(control, 1)
         box.addLayout(top)
 
@@ -1031,6 +1033,8 @@ class _NumericParamField(QWidget):
         self._sweep_mode = on
         self._check.setVisible(on)
         self._editor.setVisible(on and self._check.isChecked())
+        # When swept, the range/distribution editor replaces the fixed value, so hide the control.
+        self._control.setVisible(not self.is_swept())
         self._apply_tint()
 
     def set_grid_mode(self, on: bool) -> None:
@@ -1044,6 +1048,7 @@ class _NumericParamField(QWidget):
 
     def _on_toggle(self, on: bool) -> None:
         self._editor.setVisible(self._sweep_mode and on)
+        self._control.setVisible(not self.is_swept())
         self._apply_tint()
         self.changed.emit()
 
