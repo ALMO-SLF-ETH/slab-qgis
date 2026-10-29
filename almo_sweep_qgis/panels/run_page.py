@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import contextlib
 import glob
+import hashlib
+import json
 import os
+import shutil
+from pathlib import Path
 from typing import Any
 
 from qgis.core import (
@@ -27,6 +31,7 @@ from qgis.core import (
     QgsRasterPipe,
     QgsSingleBandPseudoColorRenderer,
     QgsStyle,
+    QgsTask,
     QgsVectorFileWriter,
     QgsVectorLayer,
 )
@@ -41,13 +46,14 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from almo_sweep_qgis import engine, settings
+from almo_sweep_qgis import engine, settings, sweep_plan
 from almo_sweep_qgis.dem.resample import default_resampled_path, raster_resolution
 from almo_sweep_qgis.dem.style import apply_hillshade
 from almo_sweep_qgis.panels.run_pipeline import ResampleTask, RunController
@@ -64,18 +70,35 @@ class RunPage(QWidget):
         self._task: RunTask | None = None
         self._controller: RunController | None = None
         self._loaded_frame_series = False
+        self._is_sweep = False  # whether the launched batch is a parameter sweep
+        self._project_root_path: str | None = None  # the current run's project folder (summary)
+        #: input name -> path to feed the run(s), overriding the layer's own source. Set by the
+        #: copy-inputs step (and left empty when inputs are used in place).
+        self._inputs_override: dict[str, str] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
 
         form = QFormLayout()
-        self._name_edit = QLineEdit("run_001")
-        form.addRow("Run name", self._name_edit)
-
         self._out_dir = QgsFileWidget()
         self._out_dir.setStorageMode(QgsFileWidget.StorageMode.GetDirectory)
         self._out_dir.setDialogTitle("Choose an output folder")
         form.addRow("Output folder", self._out_dir)
+
+        self._name_edit = QLineEdit("project")
+        self._name_edit.setToolTip(
+            "A folder with this name is created in the output folder; each run goes in its own "
+            "sub-folder (<project>_000001, …)."
+        )
+        form.addRow("Project name", self._name_edit)
+
+        self._copy_inputs_check = QCheckBox("Copy input layers into the project (inputs/)")
+        self._copy_inputs_check.setChecked(True)
+        self._copy_inputs_check.setToolTip(
+            "Copy the DEM and release layers into <project>/inputs/ so the project is "
+            "self-contained. Inputs already inside the project are left in place."
+        )
+        form.addRow("", self._copy_inputs_check)
         root.addLayout(form)
 
         # Outputs to store: rebuilt from the manifest. Non-optional outputs are always kept
@@ -148,10 +171,45 @@ class RunPage(QWidget):
             if not self._ensure_inputs_saved(manifest):
                 return
 
-        # Build the batch of background steps: any armed raster resamples first, then the run.
-        # (A parameter sweep will later add one run step per sim; the pipeline already handles it.)
+        try:
+            project_root = self._project_root()  # <output folder>/<project>
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return
+        self._project_root_path = project_root
+        self._inputs_override = {}
+
+        # Build the batch of background steps, in order:
+        #   1. any armed raster resamples (re-point inputs to the resampled rasters),
+        #   2. optionally copy the inputs into <project>/inputs/ (runs after resamples so it
+        #      copies the resampled rasters),
+        #   3. the run(s): one for a deterministic study, one per sample for a sweep.
+        # The pipeline treats them all the same -- the progress bar/ETA describe the whole batch.
         jobs: list[Any] = self._pending_resample_jobs(manifest)
-        jobs.append(_RunJob(self))
+        if self._copy_inputs_check.isChecked() and manifest is not None and manifest.inputs:
+            jobs.append(_CopyInputsJob(self, manifest, os.path.join(project_root, "inputs")))
+
+        sweep = dict(getattr(self._state, "sweep", {}) or {})
+        self._is_sweep = bool(sweep.get("enabled")) and manifest is not None
+        if self._is_sweep:
+            try:
+                jobs.extend(self._build_sweep_jobs(manifest, sweep, project_root))
+            except Exception as exc:
+                self._set_status(f"Cannot start the sweep: {exc}")
+                return
+        else:
+            run_id = self._run_id(1, 1)
+            jobs.append(
+                _RunJob(
+                    self,
+                    sample={
+                        "run_id": run_id,
+                        "params": dict(self._state.param_values),
+                        "output_dir": os.path.join(project_root, run_id),
+                        "weight": 1.0,
+                    },
+                )
+            )
 
         self._progress.setValue(0)
         self._run_button.setEnabled(False)
@@ -346,7 +404,32 @@ class RunPage(QWidget):
         name = "".join(c if c.isalnum() or c in "-_." else "_" for c in layer.name()) or "layer"
         return os.path.join(base, name + (".tif" if is_raster else ".gpkg"))
 
-    def _build_runspec(self) -> Any:
+    # -- project / run folder layout ---------------------------------------------------
+    def _project_name(self) -> str:
+        return self._name_edit.text().strip() or "project"
+
+    def _project_root(self) -> str:
+        """``<output folder>/<project>`` — the folder holding ``inputs/`` and the run folders."""
+        base = self._out_dir.filePath().strip()
+        if not base:
+            raise ValueError("choose an output folder")
+        return os.path.join(base, self._project_name())
+
+    def _run_id(self, index: int, total: int) -> str:
+        """``<project>_000001`` — zero-padded to at least 6 digits (more if the sweep is larger)."""
+        width = max(6, len(str(total)))
+        return f"{self._project_name()}_{index:0{width}d}"
+
+    def _build_runspec(
+        self,
+        *,
+        run_id: str | None = None,
+        params: dict[str, Any] | None = None,
+        output_dir: str | None = None,
+    ) -> Any:
+        """Resolve a run-spec. With no arguments, the single deterministic run; a sweep passes a
+        per-sample ``run_id``/``params``/``output_dir``. Inputs (and their CRS) are shared; a path
+        in ``self._inputs_override`` (set by the copy-inputs step) replaces a layer's own source."""
         manifest = self._state.manifest
         if manifest is None:
             raise ValueError("no model selected")
@@ -359,7 +442,7 @@ class RunPage(QWidget):
                 continue
             layer = project.mapLayer(layer_id)
             if layer is not None:
-                inputs[name] = layer.source()
+                inputs[name] = self._inputs_override.get(name) or layer.source()
                 # Capture the layer's CRS so the model can georeference its outputs. An ESRI ASCII
                 # DEM carries no CRS inline, so this is the only reliable source. Prefer the compact
                 # authority id (e.g. "EPSG:2056"); fall back to WKT for a custom CRS.
@@ -367,25 +450,150 @@ class RunPage(QWidget):
                 if crs is not None and crs.isValid():
                     input_crs[name] = crs.authid() or crs.toWkt()
 
-        # Edited values from the Parameters page; resolve_runspec fills any gaps with
-        # manifest defaults, so this works even if that page was never opened.
-        params = dict(self._state.param_values)
+        # Edited values from the Parameters page (or a sweep sample); resolve_runspec fills any
+        # gaps with manifest defaults, so this works even if the Parameters page was never opened.
+        params = dict(params) if params is not None else dict(self._state.param_values)
 
-        run_name = self._name_edit.text().strip() or "run"
-        base = self._out_dir.filePath().strip()
-        if not base:
-            raise ValueError("choose an output folder")
-        output_dir = os.path.join(base, run_name)
+        run_id = run_id or self._run_id(1, 1)
+        if output_dir is None:
+            output_dir = os.path.join(self._project_root(), run_id)
 
         return engine.resolve_runspec(
             manifest,
-            run_id=run_name,
+            run_id=run_id,
             inputs=inputs,
             params=params,
             output_dir=output_dir,
             store_outputs=self._selected_outputs(),
             input_crs=input_crs,
         )
+
+    # -- copy inputs into the project --------------------------------------------------
+    def _inputs_copy_plan(self, manifest: Any, inputs_dir: str) -> list[tuple[str, str]]:
+        """Which inputs to copy into ``inputs_dir``: ``(name, source_path)`` for every visible
+        input that is on disk and not already inside the project folder."""
+        project_root = self._project_root()
+        project = QgsProject.instance()
+        values = self._state.param_values
+        plan: list[tuple[str, str]] = []
+        for name, spec in manifest.inputs.items():
+            if not spec.is_visible(values):
+                continue
+            layer_id = self._state.input_layers.get(name)
+            if not layer_id:
+                continue
+            layer = project.mapLayer(layer_id)
+            if layer is None:
+                continue
+            src = _layer_local_path(layer)
+            if src is None or _is_within(src, project_root):
+                continue  # not on disk, or already inside the project (nothing to copy)
+            plan.append((name, src))
+        return plan
+
+    def _resolve_inputs_copy_plan(
+        self, manifest: Any, inputs_dir: str
+    ) -> tuple[list[tuple[str, str, str]], dict[str, str]]:
+        """Decide how each input is placed in ``inputs/``, verifying identity by name + checksum.
+
+        For every input that would be copied: if no file of that name is there yet, it is copied;
+        if a file of that name is there and its **checksum matches**, it is reused in place (no
+        copy); if the name matches but the **data differs**, the user is asked to either copy the
+        selected file under a new name (and run with it) or cancel the run to inspect the files.
+
+        Returns ``(copies, reuse)`` where ``copies`` is ``(name, src, dst)`` operations to perform
+        and ``reuse`` maps an input name to an already-present identical file. Raises
+        ``RuntimeError`` if the user cancels over a conflict."""
+        copies: list[tuple[str, str, str]] = []
+        reuse: dict[str, str] = {}
+        for name, src in self._inputs_copy_plan(manifest, inputs_dir):
+            dst = os.path.join(inputs_dir, os.path.basename(src))
+            if not os.path.exists(dst):
+                copies.append((name, src, dst))
+            elif _same_file(src, dst):
+                reuse[name] = dst  # identical data already in the project — reuse it
+            elif self._prompt_input_conflict(os.path.basename(src), src, dst) == "rename":
+                copies.append((name, src, _unique_dst(inputs_dir, src)))
+            else:
+                raise RuntimeError(
+                    f"run cancelled: an input named '{os.path.basename(src)}' already exists in "
+                    f"'{inputs_dir}' with different contents — inspect the files, then run again"
+                )
+        return copies, reuse
+
+    def _prompt_input_conflict(self, name: str, src: str, dst: str) -> str:
+        """Ask the user how to resolve a same-name/different-data input conflict.
+
+        Returns ``"rename"`` (copy the selected file under a new name and run with it) or
+        ``"cancel"`` (abort so the files can be inspected)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Input file conflict")
+        box.setText(
+            f"An input named '{name}' already exists in the project's inputs folder, but its "
+            f"contents differ from the file you selected."
+        )
+        box.setInformativeText(
+            f"Existing: {dst}\nSelected: {src}\n\nCopy the selected file under a new name and run "
+            f"with it, or cancel the run to inspect the files yourself?"
+        )
+        rename_btn = box.addButton("Copy under a new name", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel run", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return "rename" if box.clickedButton() is rename_btn else "cancel"
+
+    # -- sweep ------------------------------------------------------------------------
+    def _build_sweep_jobs(
+        self, manifest: Any, sweep: dict[str, Any], project_root: str
+    ) -> list[Any]:
+        """Expand the study into one run job per sample, and write the study's provenance.
+
+        Each sample becomes a ``_RunJob`` with its own run id, parameter values and output
+        sub-folder (``<project>/<project>_NNNNNN``). A ``study.json`` recording the scheme, seed and
+        every sample's parameters and weight is written into the project root, so a
+        probability-weighted map can be built from the results later.
+        """
+        plan = sweep_plan.build_plan(manifest, sweep, dict(self._state.param_values))
+        if not plan.samples:
+            raise ValueError("the sweep produced no samples — select a parameter to vary")
+
+        os.makedirs(project_root, exist_ok=True)
+        jobs: list[Any] = []
+        records: list[dict[str, Any]] = []
+        for i, sample in enumerate(plan.samples, start=1):
+            run_id = self._run_id(i, plan.count)
+            out_dir = os.path.join(project_root, run_id)
+            values = dict(sample.values)
+            jobs.append(
+                _RunJob(
+                    self,
+                    sample={
+                        "run_id": run_id,
+                        "params": values,
+                        "output_dir": out_dir,
+                        "weight": sample.weight,
+                    },
+                )
+            )
+            records.append({"run_id": run_id, "weight": sample.weight, "params": values})
+
+        self._write_study_json(project_root, self._project_name(), plan, records)
+        return jobs
+
+    @staticmethod
+    def _write_study_json(
+        project_root: str, project_name: str, plan: Any, records: list[dict[str, Any]]
+    ) -> None:
+        data = {
+            "project": project_name,
+            "scheme": plan.describe,
+            "seed": plan.seed,
+            "count": plan.count,
+            "samples": records,
+        }
+        path = os.path.join(project_root, "study.json")
+        with contextlib.suppress(OSError), open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
 
     # -- output selection --------------------------------------------------------------
     def _rebuild_outputs(self, manifest: Any | None) -> None:
@@ -425,7 +633,10 @@ class RunPage(QWidget):
         if not run_results:
             self._set_status("Run finished, but produced no result.")
             return
-        # One run for now; a sweep will summarise many. Load each successful run's outputs.
+        if self._is_sweep:
+            self._report_sweep_finished(run_results)
+            return
+        # A single deterministic run: load its outputs onto the map.
         messages: list[str] = []
         any_ok = False
         for result in run_results:
@@ -446,6 +657,27 @@ class RunPage(QWidget):
                     "to step through the frames."
                 )
         self._set_status(" ".join(messages))
+
+    def _report_sweep_finished(self, run_results: list[Any]) -> None:
+        """Summarise a finished sweep without loading every run's layers.
+
+        A sweep can be hundreds of runs, each with several output layers, so auto-loading them all
+        would overwhelm the project; inspection and aggregation belong to the Results page. Report
+        how many succeeded and where the outputs are, and surface the first few failures.
+        """
+        self._progress.setValue(100)
+        ok = sum(1 for r in run_results if r.ok)
+        failed = [r for r in run_results if not r.ok]
+        message = f"Sweep complete — {ok} of {len(run_results)} simulation(s) succeeded"
+        if failed:
+            message += f", {len(failed)} failed"
+        if self._project_root_path:
+            message += f". Outputs are in '{self._project_root_path}' (with study.json)"
+        message += ". Use the Results page to inspect and aggregate them."
+        if failed:
+            preview = "; ".join(f"'{r.run_id}': {r.error}" for r in failed[:3])
+            message += f"  First failure(s): {preview}"
+        self._set_status(message)
 
     def _on_pipeline_failed(self, message: str) -> None:
         self._controller = None
@@ -682,24 +914,153 @@ class _ResampleJob:
 
 class _RunJob:
     """Pipeline step: run one simulation. Its run-spec is built when the step starts, so it sees
-    any inputs re-pointed by earlier resample steps."""
+    any inputs re-pointed by earlier resample steps.
+
+    ``sample`` is ``None`` for the single deterministic run (parameters/name/folder come from the
+    page), or a ``{"run_id", "params", "output_dir", "weight"}`` dict for one sample of a sweep."""
 
     weight = 1.0
 
-    def __init__(self, page: RunPage) -> None:
+    def __init__(self, page: RunPage, sample: dict[str, Any] | None = None) -> None:
         self._page = page
+        self._sample = sample
         self.label = "Running the simulation"
         self.result: Any = None
         self._task: RunTask | None = None
 
     def make_task(self) -> RunTask:
-        runspec = self._page._build_runspec()  # may raise -> the pipeline reports it as failed
+        if self._sample is None:
+            runspec = self._page._build_runspec()  # may raise -> pipeline reports it as failed
+        else:
+            runspec = self._page._build_runspec(
+                run_id=self._sample["run_id"],
+                params=self._sample["params"],
+                output_dir=self._sample["output_dir"],
+            )
         self.label = f"Running '{runspec.run_id}'"
         self._task = RunTask(self._page._state.manifest, runspec)
         return self._task
 
     def finalize(self) -> None:
         self.result = self._task.result if self._task is not None else None
+
+
+class _CopyInputsTask(QgsTask):
+    """Background copy of input datasets into the project's ``inputs/`` folder.
+
+    Each copy op is ``(name, src, dst)``: it copies ``src`` (and its sidecars) to ``dst``, which
+    may carry a new basename when a name conflict was resolved by renaming. ``result_paths`` maps
+    each input name to the copied primary file, for the runs to read.
+    """
+
+    def __init__(self, copies: list[tuple[str, str, str]]) -> None:
+        super().__init__("Copy inputs", QgsTask.Flag.CanCancel)
+        self._copies = copies
+        self.result_paths: dict[str, str] = {}
+        self.error: str | None = None
+
+    def run(self) -> bool:
+        try:
+            total = len(self._copies) or 1
+            for i, (name, src, dst) in enumerate(self._copies):
+                if self.isCanceled():
+                    return False
+                self.result_paths[name] = _copy_dataset(src, dst)
+                self.setProgress((i + 1) / total * 100.0)
+        except Exception as exc:  # a failed copy must fail the run, not silently run stale inputs
+            self.error = str(exc)
+            return False
+        return not self.isCanceled()
+
+
+class _CopyInputsJob:
+    """Pipeline step: copy the run's inputs into ``<project>/inputs/`` and point the runs at them.
+
+    Runs after any resample step, so it copies the resampled rasters actually used. Inputs already
+    inside the project (or identical copies already there) are reused in place; a same-name file
+    with different data prompts the user (resolved on the main thread in :meth:`make_task`). A
+    no-op when nothing needs copying."""
+
+    weight = 0.1  # file copy; typically short next to a simulation
+
+    def __init__(self, page: RunPage, manifest: Any, inputs_dir: str) -> None:
+        self._page = page
+        self._manifest = manifest
+        self._inputs_dir = inputs_dir
+        self.label = "Copying inputs into the project"
+        self.result: Any = None  # contributes no run result
+        self._reuse: dict[str, str] = {}
+        self._task: _CopyInputsTask | None = None
+
+    def make_task(self) -> _CopyInputsTask:
+        # Resolve (checksum + prompt on conflict) on the main thread; raises if the user cancels.
+        copies, self._reuse = self._page._resolve_inputs_copy_plan(self._manifest, self._inputs_dir)
+        self._task = _CopyInputsTask(copies)
+        return self._task
+
+    def finalize(self) -> None:
+        task = self._task
+        if task is None or task.error:
+            raise RuntimeError(task.error if task else "input copy did not run")
+        # The runs read the in-project paths (freshly copied, or an identical file already there).
+        self._page._inputs_override.update(self._reuse)
+        self._page._inputs_override.update(task.result_paths)
+
+
+def _is_within(path: str, root: str) -> bool:
+    """True if ``path`` is inside directory ``root`` (so it need not be copied again)."""
+    root_abs = os.path.abspath(root)
+    try:
+        return os.path.commonpath([os.path.abspath(path), root_abs]) == root_abs
+    except ValueError:  # different drives on Windows -> not within
+        return False
+
+
+def _copy_dataset(src: str, dst: str) -> str:
+    """Copy dataset ``src`` to ``dst`` (its primary file), with sidecars, and return ``dst``.
+
+    Sidecars are files whose name is ``<stem>.<something>`` (a shapefile's ``.shx``/``.dbf``/
+    ``.prj``/``.cpg``, a raster's ``.prj``/``.tfw``/``.tif.aux.xml``), so the copied dataset is
+    complete and openable. When ``dst`` has a different stem from ``src`` (a rename on conflict),
+    every sidecar is renamed to match, keeping the dataset consistent."""
+    source = Path(src)
+    target = Path(dst)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    src_stem, tgt_stem = source.stem, target.stem
+    prefix = src_stem + "."
+    for sibling in source.parent.iterdir():
+        if sibling.is_file() and (sibling.name == source.name or sibling.name.startswith(prefix)):
+            suffix = sibling.name[len(src_stem) :]  # ".tif", ".prj", ".tif.aux.xml"
+            shutil.copy2(sibling, target.parent / (tgt_stem + suffix))
+    return str(target)
+
+
+def _unique_dst(inputs_dir: str, src: str) -> str:
+    """A non-colliding ``inputs_dir`` path from ``src``'s name: ``dem_1.tif``, ``dem_2.tif``, …"""
+    source = Path(src)
+    stem = source.stem
+    suffix = source.name[len(stem) :]
+    i = 1
+    while True:
+        candidate = os.path.join(inputs_dir, f"{stem}_{i}{suffix}")
+        if not os.path.exists(candidate):
+            return candidate
+        i += 1
+
+
+def _same_file(a: str, b: str) -> bool:
+    """True if two files have identical contents (size check, then SHA-256)."""
+    if os.path.getsize(a) != os.path.getsize(b):
+        return False
+    return _sha256(a) == _sha256(b)
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _layer_local_path(layer: Any) -> str | None:

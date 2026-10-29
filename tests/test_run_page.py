@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.run_page import RunPage, _layer_local_path
+from almo_sweep_qgis.panels.run_page import (
+    RunPage,
+    _copy_dataset,
+    _CopyInputsTask,
+    _is_within,
+    _layer_local_path,
+    _same_file,
+    _unique_dst,
+)
 from almo_sweep_qgis.panels.run_task import RunTask
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication, QgsProject
@@ -32,18 +43,19 @@ def toy_manifest():
     )
 
 
-def test_build_runspec_uses_defaults_and_output_folder(
+def test_build_runspec_uses_project_and_run_folders(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
     state = StudyState()
     state.set_manifest(toy_manifest)
     page = RunPage(state)
-    page._name_edit.setText("r1")
+    page._name_edit.setText("r1")  # the project name
     page._out_dir.setFilePath(str(tmp_path))
 
     spec = page._build_runspec()
-    assert spec.run_id == "r1"
-    assert spec.output_dir.endswith("r1")
+    # <output>/<project>/<project>_000001 ; run id zero-padded to 6 digits
+    assert spec.run_id == "r1_000001"
+    assert spec.output_dir.endswith(os.path.join("r1", "r1_000001"))
     assert spec.store_outputs == ("grid",)
 
 
@@ -364,6 +376,237 @@ def test_load_results_unpacks_bands_into_one_group(
     assert run_group is not None  # all outputs grouped under the run
     assert run_group.findGroup("grid") is not None  # bands grouped under the output name
     assert len(run_group.findGroup("grid").findLayers()) == 3
+
+
+def _sweepable_manifest():
+    """A toy manifest with one sweepable float parameter, driven by the toy model binary."""
+    from almo_sweep.contracts import parse_manifest
+
+    return parse_manifest(
+        {
+            "model": {"name": "toy", "version": "0.1.0"},
+            "invocation": {
+                "command": [sys.executable, str(_TOY)],
+                "args_template": ["--runspec", "{runspec}"],
+            },
+            "params": {
+                "scale": {
+                    "type": "float",
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 3.0,
+                    "sweepable": True,
+                }
+            },
+            "outputs": {"grid": {"kind": "raster"}},
+        }
+    )
+
+
+def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    manifest = _sweepable_manifest()
+    state = StudyState()
+    state.set_manifest(manifest)
+    state.sweep = {
+        "enabled": True,
+        "scheme": "grid",
+        "n_samples": 50,
+        "steps": 4,
+        "spacing": "linear",
+        "seed": None,
+        "params": {"scale": {"dist": "uniform", "low": 0.0, "high": 3.0}},
+    }
+    page = RunPage(state)
+    page._name_edit.setText("myproj")
+    page._out_dir.setFilePath(str(tmp_path))
+
+    project_root = page._project_root()
+    jobs = page._build_sweep_jobs(manifest, state.sweep, project_root)
+    assert len(jobs) == 4
+
+    # Each job builds a distinct, 6-digit-numbered run under <output>/myproj/.
+    first = jobs[0].make_task()._runspec
+    last = jobs[-1].make_task()._runspec
+    assert first.run_id == "myproj_000001"
+    assert last.run_id == "myproj_000004"
+    assert first.output_dir.endswith(os.path.join("myproj", "myproj_000001"))
+    assert first.params["scale"] == 0.0 and last.params["scale"] == 3.0  # grid endpoints
+
+    study = json.loads((Path(project_root) / "study.json").read_text(encoding="utf-8"))
+    assert study["project"] == "myproj"
+    assert study["count"] == 4
+    assert study["scheme"]["kind"] == "grid"
+    assert len(study["samples"]) == 4
+    assert abs(sum(s["weight"] for s in study["samples"]) - 1.0) < 1e-9
+
+
+def test_is_within_detects_project_containment(tmp_path: Path) -> None:
+    inside = tmp_path / "proj" / "inputs" / "dem.tif"
+    assert _is_within(str(inside), str(tmp_path / "proj"))
+    assert not _is_within(str(tmp_path / "elsewhere" / "dem.tif"), str(tmp_path / "proj"))
+
+
+def test_copy_dataset_copies_the_whole_dataset(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "dem.asc").write_text("ncols 1\n", encoding="utf-8")
+    (src_dir / "dem.prj").write_text("EPSG:2056", encoding="utf-8")  # sidecar, same stem
+    (src_dir / "other.asc").write_text("x", encoding="utf-8")  # different stem -> not copied
+
+    dst_dir = tmp_path / "proj" / "inputs"
+    dst = str(dst_dir / "dem.asc")
+    copied = _copy_dataset(str(src_dir / "dem.asc"), dst)
+    assert copied == dst
+    assert (dst_dir / "dem.asc").exists() and (dst_dir / "dem.prj").exists()
+    assert not (dst_dir / "other.asc").exists()
+
+
+def test_copy_dataset_renames_sidecars_to_match(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "dem.asc").write_text("grid", encoding="utf-8")
+    (src_dir / "dem.prj").write_text("EPSG:2056", encoding="utf-8")
+
+    dst_dir = tmp_path / "inputs"
+    dst = str(dst_dir / "dem_1.asc")  # a rename-on-conflict target
+    _copy_dataset(str(src_dir / "dem.asc"), dst)
+    assert (dst_dir / "dem_1.asc").exists()
+    assert (dst_dir / "dem_1.prj").exists()  # sidecar renamed to match the new stem
+
+
+def test_same_file_and_unique_dst(tmp_path: Path) -> None:
+    a = tmp_path / "a.tif"
+    a.write_bytes(b"data")
+    b = tmp_path / "b.tif"
+    b.write_bytes(b"data")
+    c = tmp_path / "c.tif"
+    c.write_bytes(b"different")
+    assert _same_file(str(a), str(b)) is True
+    assert _same_file(str(a), str(c)) is False
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "dem.tif").write_bytes(b"x")
+    assert _unique_dst(str(inputs), str(tmp_path / "dem.tif")) == str(inputs / "dem_1.tif")
+
+
+def _dem_run_page(tmp_path: Path, src: str) -> tuple[RunPage, StudyState]:
+    from qgis.core import QgsRasterLayer
+
+    manifest = _sweepable_manifest_with_dem()
+    layer = QgsRasterLayer(src, "dem")
+    QgsProject.instance().addMapLayer(layer)
+    state = StudyState()
+    state.set_manifest(manifest)
+    state.input_layers["dem"] = layer.id()
+    page = RunPage(state)
+    page._name_edit.setText("proj")
+    page._out_dir.setFilePath(str(tmp_path))
+    return page, state
+
+
+def test_copy_inputs_resolve_and_task(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    pytest.importorskip("osgeo")
+    src = str(tmp_path / "dem.tif")
+    _write_raster(src, [1.0])
+    page, state = _dem_run_page(tmp_path, src)
+    manifest = state.manifest
+
+    inputs_dir = os.path.join(page._project_root(), "inputs")
+    assert page._inputs_copy_plan(manifest, inputs_dir) == [("dem", src)]
+
+    copies, reuse = page._resolve_inputs_copy_plan(manifest, inputs_dir)
+    assert reuse == {} and copies == [("dem", src, os.path.join(inputs_dir, "dem.tif"))]
+    task = _CopyInputsTask(copies)
+    assert task.run() is True
+    copied = task.result_paths["dem"]
+    assert os.path.exists(copied) and _is_within(copied, page._project_root())
+
+    # The run-spec then reads the copied path, not the original.
+    page._inputs_override.update(task.result_paths)
+    spec = page._build_runspec(run_id="proj_000001", output_dir=str(tmp_path / "proj" / "r"))
+    assert spec.inputs["dem"] == copied
+
+    # An input already inside the project is not scheduled for copying again.
+    state.input_layers["dem"] = _add_raster_layer(copied)
+    assert page._inputs_copy_plan(manifest, inputs_dir) == []
+
+
+def test_copy_inputs_reuses_identical_existing(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    pytest.importorskip("osgeo")
+    src = str(tmp_path / "dem.tif")
+    _write_raster(src, [1.0])
+    page, state = _dem_run_page(tmp_path, src)
+    inputs_dir = os.path.join(page._project_root(), "inputs")
+    os.makedirs(inputs_dir, exist_ok=True)
+    shutil.copy2(src, os.path.join(inputs_dir, "dem.tif"))  # identical file already there
+
+    copies, reuse = page._resolve_inputs_copy_plan(state.manifest, inputs_dir)
+    assert copies == []  # nothing to copy — same name, same checksum
+    assert reuse == {"dem": os.path.join(inputs_dir, "dem.tif")}
+
+
+def test_copy_inputs_conflict_rename(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    pytest.importorskip("osgeo")
+    src = str(tmp_path / "dem.tif")
+    _write_raster(src, [1.0])
+    page, state = _dem_run_page(tmp_path, src)
+    inputs_dir = os.path.join(page._project_root(), "inputs")
+    os.makedirs(inputs_dir, exist_ok=True)
+    (Path(inputs_dir) / "dem.tif").write_bytes(b"different data")  # same name, different data
+
+    page._prompt_input_conflict = lambda *a: "rename"  # user chooses "copy under a new name"
+    copies, reuse = page._resolve_inputs_copy_plan(state.manifest, inputs_dir)
+    assert reuse == {}
+    assert copies == [("dem", src, os.path.join(inputs_dir, "dem_1.tif"))]
+
+
+def test_copy_inputs_conflict_cancel_aborts(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    pytest.importorskip("osgeo")
+    src = str(tmp_path / "dem.tif")
+    _write_raster(src, [1.0])
+    page, state = _dem_run_page(tmp_path, src)
+    inputs_dir = os.path.join(page._project_root(), "inputs")
+    os.makedirs(inputs_dir, exist_ok=True)
+    (Path(inputs_dir) / "dem.tif").write_bytes(b"different data")
+
+    page._prompt_input_conflict = lambda *a: "cancel"  # user chooses to inspect manually
+    with pytest.raises(RuntimeError, match="different contents"):
+        page._resolve_inputs_copy_plan(state.manifest, inputs_dir)
+
+
+def _sweepable_manifest_with_dem():
+    from almo_sweep.contracts import parse_manifest
+
+    return parse_manifest(
+        {
+            "model": {"name": "toy", "version": "0.1.0"},
+            "invocation": {"command": ["x"]},
+            "inputs": {"dem": {"kind": "raster"}},
+            "outputs": {"grid": {"kind": "raster"}},
+        }
+    )
+
+
+def _add_raster_layer(path: str) -> str:
+    from qgis.core import QgsRasterLayer
+
+    layer = QgsRasterLayer(path, os.path.basename(path))
+    QgsProject.instance().addMapLayer(layer)
+    return layer.id()
+
+
+def test_gui_tool_versions_reports_the_plugin(qgis_app: QgsApplication) -> None:
+    from almo_sweep_qgis.panels.run_task import _gui_tool_versions
+
+    tv = _gui_tool_versions()
+    assert "gui" in tv
+    gui = tv["gui"]
+    assert gui["name"] == "almo_sweep_qgis"
+    assert gui["version"] is not None  # read from the plugin's metadata.txt
+    assert set(gui) >= {"name", "version", "commit", "dirty", "date"}
 
 
 def _write_raster(path: str, bands: list[float]) -> None:

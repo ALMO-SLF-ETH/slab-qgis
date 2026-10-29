@@ -9,8 +9,10 @@ False only when execution itself could not proceed (e.g. a bad invocation).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from qgis.core import QgsTask
@@ -42,6 +44,8 @@ class RunTask(QgsTask):
                 env=env,
                 # Let a Stop button (which cancels this task) actually kill the model process.
                 cancel_check=self.isCanceled,
+                # Record this plugin's version/commit/dirty in each run's provenance.json.
+                tool_versions=_gui_tool_versions(),
             )
         except Exception as exc:
             self.error_message = str(exc)
@@ -52,6 +56,31 @@ class RunTask(QgsTask):
 
     def _on_progress(self, event: Any) -> None:
         self.setProgress(float(event.progress) * 100.0)
+
+
+def _gui_tool_versions() -> dict[str, dict[str, Any]]:
+    """This plugin's provenance (version from ``metadata.txt`` + git commit/dirty/date).
+
+    Returned under ``"gui"`` for the engine to write into each run's ``provenance.json``. Empty if
+    the engine (which provides the git helper) is unavailable."""
+    try:
+        from almo_sweep.provenance import package_provenance
+    except Exception:
+        return {}
+    import almo_sweep_qgis
+
+    pkg_dir = Path(almo_sweep_qgis.__file__).resolve().parent
+    version = _read_plugin_version(pkg_dir / "metadata.txt")
+    return {"gui": package_provenance("almo_sweep_qgis", pkg_dir, version=version)}
+
+
+def _read_plugin_version(metadata_path: Path) -> str | None:
+    """The ``version=`` value from the plugin's ``metadata.txt``, if present."""
+    with contextlib.suppress(OSError):
+        for line in metadata_path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("version="):
+                return line.split("=", 1)[1].strip()
+    return None
 
 
 def _qgis_python() -> str:
