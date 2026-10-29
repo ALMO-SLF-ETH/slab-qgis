@@ -117,7 +117,7 @@ toolbar button appears; click it to show the **ALMO Sweep** dock panel.
 
 ### Download a DEM for a region (optional)
 
-If you don't already have a DEM, the panel header has **Download DEM for region…**. Pick a
+If you don't already have a DEM, the **Pre-processing** tab has **Download DEM for region…**. Pick a
 provider (currently **swissALTI3D** from swisstopo, 0.5 m or 2 m source tiles), a **polygon layer**
 outlining your region of interest, and an output file; the covering tiles are fetched and **merged
 into one clipped GeoTIFF** (in the background), then added to the map **as a hillshade** ready to
@@ -164,7 +164,8 @@ no launching QGIS from a terminal.
      it a **range** and a **distribution** (Uniform or Normal) instead of a fixed value; the others
      keep their set value. Because the option lives on the control itself, only parameters that
      actually apply (per `visible_when`) are ever offered for sweeping. The sweep **method** (grid /
-     Latin hypercube / Monte Carlo, and its steps/samples/seed) is chosen on the **Study** page.
+     Latin hypercube / Monte Carlo, and its steps/samples/seed) appears just above, on the same
+     page, once the sweep is enabled.
 
    - **DEM resolution** — under each raster picker the selected raster's native **resolution** is
      shown. Tick **Resample to** to coarsen/refine it to a chosen cell size with a chosen method
@@ -238,8 +239,7 @@ no launching QGIS from a terminal.
 ### Study — the sweep method
 
 *Which* parameters vary (and over what range/distribution) is chosen on the **Parameters** page,
-beside the values. The **Study** page holds only the sweep **method** — it is active once the sweep
-is enabled on Parameters:
+beside the values; the sweep **method** lives there too, revealed once the sweep is enabled:
 
 - **Scheme** — how the combinations to simulate are chosen:
   - **Grid (full factorial)** — each varied parameter is cut into equal **steps** (linear or
@@ -250,9 +250,35 @@ is enabled on Parameters:
   - **Monte Carlo** — random draws; again a fixed **sample count**. A **fixed seed** makes the draw
     reproducible.
 - The per-parameter **distribution** (set on Parameters) is used only to **weight the results**
-  afterwards (e.g. a probability-weighted extent map — each run's weight is recorded in
-  `study.json`); it never changes *which* combinations are run. Parameters you don't vary stay at
+  afterwards (the hazard maps on the Results page — each run's weight is recorded in `study.json`
+  and `runs.json`); it never changes *which* combinations are run. Parameters you don't vary stay at
   their Parameters-page values.
+- **Study execution** (on the Run page, shown while a sweep is enabled) sets how many runs execute
+  at once (**Parallel runs**, default the processor count) and the **Retries** per failed run.
+
+### Results — inspect a sweep
+
+The **Results** page reads a project's `runs.json` / `study.json` and shows:
+
+- a **header** — scheme, seed, success/failure counts, the swept parameters and their
+  distributions, total compute time, a ⚠ warning if any code component was git-dirty at run time
+  (results then are not reproducible), and a failure summary;
+- a **per-run table** — weight, the swept-parameter values, duration, error, and (after computing
+  hazard maps) each run's derived max depth, max velocity and impacted area.
+
+A sweep's temporal outputs are never bulk-loaded. Instead **Compute hazard maps** reduces every
+successful run's `max_values` — **weighted by each run's recorded sample weight**, so one path is
+correct for every scheme (equal weights for LHS/Monte Carlo; quadrature weights for a grid) — into
+a few layers written to `<project>/aggregates/` and loaded styled:
+
+- **impact probability** — weighted fraction of runs whose max depth exceeds the threshold `τ`
+  (configurable, default 0.1 m): the headline P(reached) map;
+- **weighted mean** max depth and max velocity (expected intensity);
+- **max-of-max envelope** (credible worst case);
+- an optional **weighted percentile** of max depth (default p90, the tail).
+
+The reduction streams the rasters in row-stripes (bounded memory regardless of run count) off the
+main thread.
 
 ---
 
@@ -268,8 +294,10 @@ almo_sweep_qgis/            the plugin package (this folder is what QGIS loads)
   settings.py               per-model runtime settings (QgsSettings)
   state.py                  shared StudyState (manifest, inputs, params, sweep config)
   sweep_plan.py             plain-data sweep config -> engine distributions + strategy; run count
-  panels/                   main_panel, parameters_page (inputs + params), study_page (sweep),
-                            run_page, run_pipeline, run_task, settings_dialog
+  panels/                   main_panel (tabbed), parameters_page (inputs + params + sweep),
+                            run_page, run_pipeline, run_task, results_page, preprocessing_page,
+                            settings_dialog
+  results/                  study.py (read runs.json/study.json), aggregate.py (weighted hazard maps)
   resources/icon.svg        toolbar icon
 tests/                      headless tests (run under QGIS's Python)
 ```
