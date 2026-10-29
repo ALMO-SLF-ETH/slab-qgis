@@ -14,7 +14,7 @@ from almo_sweep_qgis.panels.main_panel import PAGE_TITLES, MainPanel
 from almo_sweep_qgis.plugin import AlmoSweepPlugin
 from qgis.core import QgsApplication
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtWidgets import QStackedWidget
+from qgis.PyQt.QtWidgets import QTabWidget
 from qgis.testing.mocked import get_iface
 
 # Every QgisInterface method the plugin calls. Verified against the *real* class, because the
@@ -56,9 +56,10 @@ def test_initgui_registers_and_unload_cleans_up(qgis_app: QgsApplication) -> Non
 
 def test_main_panel_builds_all_pages(qgis_app: QgsApplication) -> None:
     panel = MainPanel()
-    stack = panel.findChild(QStackedWidget)
-    assert stack is not None
-    assert stack.count() == len(PAGE_TITLES)
+    tabs = panel.findChild(QTabWidget)
+    assert tabs is not None
+    assert tabs.count() == len(PAGE_TITLES)
+    assert [tabs.tabText(i) for i in range(tabs.count())] == list(PAGE_TITLES)
 
 
 def _dampm_model_toml() -> Path:

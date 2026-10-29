@@ -1,13 +1,14 @@
-"""The main dockable panel: a model selector plus a navigator over the workflow sections.
+"""The main dockable panel: a model selector plus a tab per workflow section.
 
-The sections mirror the study workflow end to end:
+The tabs read left to right in workflow order:
 
-1. **Parameters** -- the model's inputs *and* parameters, built from its manifest (the DEM and
+1. **Pre-processing** -- model-independent data prep (e.g. download a DEM for a region).
+2. **Parameters**     -- the model's inputs *and* parameters, built from its manifest (the DEM and
    release-zone layers are chosen here). It is also the whole study page: a sweep is enabled here,
    the parameters to vary (each with a range + distribution) are picked beside their values, and
    the sweep method (scheme + steps/samples/seed) and live simulation count live here too.
-2. **Run**        -- name, output folder, output selection, launch and monitor.
-3. **Results**    -- browse and inspect the runs produced.
+3. **Run**            -- name, output folder, output selection, launch and monitor.
+4. **Results**        -- browse and inspect the runs produced, and build weighted hazard maps.
 
 The model is chosen at the top from a **persistent list** of registered models (stored in
 :class:`QgsSettings`, so it survives restarts); "Add…" registers a new one from its manifest
@@ -28,9 +29,8 @@ from qgis.PyQt.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QPushButton,
-    QStackedWidget,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -38,16 +38,18 @@ from qgis.PyQt.QtWidgets import (
 
 from almo_sweep_qgis import engine, settings
 from almo_sweep_qgis.panels.parameters_page import ParametersPage
+from almo_sweep_qgis.panels.preprocessing_page import PreprocessingPage
+from almo_sweep_qgis.panels.results_page import ResultsPage
 from almo_sweep_qgis.panels.run_page import RunPage
 from almo_sweep_qgis.panels.settings_dialog import RuntimeSettingsDialog
 from almo_sweep_qgis.state import StudyState
 
-#: Ordered section titles. The order is the intended top-to-bottom workflow.
-PAGE_TITLES = ("Parameters", "Run", "Results")
+#: Tab titles, left to right in workflow order: prepare data, then set up, run and inspect a study.
+PAGE_TITLES = ("Pre-processing", "Parameters", "Run", "Results")
 
 
 class MainPanel(QgsDockWidget):
-    """A dock widget: model selector on top, section navigator + page stack below."""
+    """A dock widget: model selector on top, one tab per workflow section below."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("ALMO Sweep", parent)
@@ -60,22 +62,16 @@ class MainPanel(QgsDockWidget):
         outer.setContentsMargins(6, 6, 6, 6)
         outer.addLayout(self._build_header())
 
-        body = QHBoxLayout()
-        self._nav = QListWidget(container)
-        self._nav.setMaximumWidth(140)
-        self._nav.addItems(PAGE_TITLES)
-
-        self._stack = QStackedWidget(container)
-        # Pages are added in PAGE_TITLES order; real pages replace placeholders as built.
-        self._stack.addWidget(ParametersPage(self.state))  # 0: Parameters (inputs, params, sweep)
-        self._stack.addWidget(RunPage(self.state))  # 1: Run
-        self._stack.addWidget(_placeholder_page("Results"))  # 2: Results
-
-        self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
-        self._nav.setCurrentRow(0)
-        body.addWidget(self._nav, 0)
-        body.addWidget(self._stack, 1)
-        outer.addLayout(body, 1)
+        # One tab per workflow section (plus a trailing Pre-processing tab), added in PAGE_TITLES
+        # order so the tab index matches.
+        self._tabs = QTabWidget(container)
+        self._tabs.addTab(PreprocessingPage(self), PAGE_TITLES[0])
+        self._tabs.addTab(ParametersPage(self.state), PAGE_TITLES[1])
+        self._tabs.addTab(RunPage(self.state), PAGE_TITLES[2])
+        self._tabs.addTab(ResultsPage(self.state), PAGE_TITLES[3])
+        # Open on Parameters — the usual starting point; Pre-processing (left) is optional prep.
+        self._tabs.setCurrentIndex(PAGE_TITLES.index("Parameters"))
+        outer.addWidget(self._tabs, 1)
 
         self.setWidget(container)
 
@@ -115,24 +111,8 @@ class MainPanel(QgsDockWidget):
         self._model_status.setEnabled(False)
         header.addWidget(self._model_status)
 
-        # Data tools (model-independent): fetch a DEM for a region from an online provider.
-        tools = QHBoxLayout()
-        self._dem_button = QPushButton("Download DEM for region…")
-        self._dem_button.setToolTip(
-            "Fetch and merge a DEM for a region polygon from an online provider (e.g. swissALTI3D)"
-        )
-        self._dem_button.clicked.connect(self._open_dem_download)
-        tools.addWidget(self._dem_button, 0)
-        tools.addStretch(1)
-        header.addLayout(tools)
-
         self._refresh_models(select=settings.last_model())
         return header
-
-    def _open_dem_download(self) -> None:
-        from almo_sweep_qgis.panels.dem_download_dialog import DemDownloadDialog
-
-        DemDownloadDialog(self).exec()
 
     def _default_status(self) -> str:
         if not engine.AVAILABLE:
@@ -224,15 +204,3 @@ class MainPanel(QgsDockWidget):
         manifest = self.state.manifest
         if manifest is not None and manifest.runtime:
             RuntimeSettingsDialog(manifest, self).exec()
-
-
-def _placeholder_page(title: str) -> QWidget:
-    page = QWidget()
-    box = QVBoxLayout(page)
-    box.addWidget(QLabel(f"<b>{title}</b>"))
-    note = QLabel("Coming soon.")
-    note.setEnabled(False)
-    box.addWidget(note)
-    box.addStretch(1)
-    box.setAlignment(Qt.AlignmentFlag.AlignTop)
-    return page
