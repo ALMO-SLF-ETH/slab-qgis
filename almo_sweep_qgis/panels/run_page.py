@@ -14,8 +14,9 @@ import hashlib
 import json
 import os
 import shutil
+from html import escape
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from qgis.core import (
     QgsApplication,
@@ -36,7 +37,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.gui import QgsFileWidget
-from qgis.PyQt.QtCore import QDate, QDateTime, QTime
+from qgis.PyQt.QtCore import QDate, QDateTime, QTime, QUrl
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -50,6 +51,7 @@ from qgis.PyQt.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -169,15 +171,17 @@ class RunPage(QWidget):
         self._progress_info.setEnabled(False)
         root.addWidget(self._progress_info)
 
-        self._status = QLabel("")
-        self._status.setWordWrap(True)
-        root.addWidget(self._status)
-        root.addStretch(1)
+        # Rich, scrollable status/log: one line per message, each tagged with a status icon, and
+        # clickable "open log" links for failed runs.
+        self._status = QTextBrowser()
+        self._status.setOpenExternalLinks(True)
+        self._status.setMinimumHeight(90)
+        root.addWidget(self._status, 1)
 
     # -- launch ------------------------------------------------------------------------
     def _on_run_clicked(self) -> None:
         if not engine.AVAILABLE:
-            self._set_status(f"Engine not installed. {engine.INSTALL_HINT}")
+            self._set_status(f"Engine not installed. {engine.INSTALL_HINT}", level="warn")
             return
         manifest = self._state.manifest
         if manifest is not None:
@@ -185,12 +189,16 @@ class RunPage(QWidget):
             if missing:
                 self._set_status(
                     "Configure the model's required settings first via 'Model settings…': "
-                    + ", ".join(missing)
+                    + ", ".join(missing),
+                    level="warn",
                 )
                 return
             missing_inputs = self._missing_inputs(manifest)
             if missing_inputs:
-                self._set_status("Select the required input(s): " + ", ".join(missing_inputs))
+                self._set_status(
+                    "Select the required input(s): " + ", ".join(missing_inputs),
+                    level="warn",
+                )
                 return
             being_edited = self._inputs_being_edited(manifest)
             if being_edited:
@@ -200,7 +208,8 @@ class RunPage(QWidget):
                 self._set_status(
                     "Finish editing and save the layer(s) before running — they have open edits "
                     "that are not on disk yet, so the run would use the old geometry: "
-                    + ", ".join(being_edited)
+                    + ", ".join(being_edited),
+                    level="warn",
                 )
                 return
             # The model reads each input from a file path, so any input that is only a temporary /
@@ -211,7 +220,7 @@ class RunPage(QWidget):
         try:
             project_root = self._project_root()  # <output folder>/<project>
         except ValueError as exc:
-            self._set_status(str(exc))
+            self._set_status(str(exc), level="warn")
             return
         self._project_root_path = project_root
         self._inputs_override = {}
@@ -232,7 +241,7 @@ class RunPage(QWidget):
             try:
                 jobs.extend(self._build_sweep_jobs(manifest, sweep, project_root))
             except Exception as exc:
-                self._set_status(f"Cannot start the sweep: {exc}")
+                self._set_status(f"Cannot start the sweep: {exc}", level="error")
                 return
         else:
             run_id = self._run_id(1, 1)
@@ -429,7 +438,7 @@ class RunPage(QWidget):
         try:
             saved = _save_raster(layer, path) if is_raster else _save_vector(layer, path)
         except Exception as exc:
-            self._set_status(f"Could not save '{label}': {exc}")
+            self._set_status(f"Could not save '{label}': {exc}", level="error")
             return False
         # Re-point the layer at the new file so the run (and future runs) read it from disk.
         provider = "gdal" if is_raster else "ogr"
@@ -611,7 +620,7 @@ class RunPage(QWidget):
             )
             records.append({"run_id": run_id, "weight": sample.weight, "params": values})
 
-        self._write_study_json(project_root, self._project_name(), plan, records)
+        self._write_study_json(project_root, self._project_name(), plan, records, sweep)
         index = engine.default_index(
             project_root, manifest, scheme=plan.describe, seed=plan.seed, count=plan.count
         )
@@ -628,13 +637,21 @@ class RunPage(QWidget):
 
     @staticmethod
     def _write_study_json(
-        project_root: str, project_name: str, plan: Any, records: list[dict[str, Any]]
+        project_root: str,
+        project_name: str,
+        plan: Any,
+        records: list[dict[str, Any]],
+        sweep: dict[str, Any],
     ) -> None:
         data = {
             "project": project_name,
             "scheme": plan.describe,
+            "scheme_key": sweep.get("scheme"),
             "seed": plan.seed,
             "count": plan.count,
+            # The per-parameter distributions chosen for the sweep, so the Results page can report
+            # "friction ~ Normal(25, 3)" without re-deriving it from the sampled values.
+            "swept": dict(sweep.get("params") or {}),
             "samples": records,
         }
         path = os.path.join(project_root, "study.json")
@@ -689,32 +706,41 @@ class RunPage(QWidget):
             elif item is not None:
                 run_results.append(item)
         if not run_results:
-            self._set_status("Run finished, but produced no result.")
+            self._set_status("Run finished, but produced no result.", level="warn")
             return
+        # Point the Results page at the project that was just simulated.
+        with contextlib.suppress(Exception):
+            self._state.projectFinished.emit(self._project_root())
         if self._is_sweep:
             self._report_sweep_finished(run_results)
             return
         # A single deterministic run: load its outputs onto the map.
-        messages: list[str] = []
+        lines: list[tuple[str, str]] = []
         any_ok = False
         for result in run_results:
             if result.ok:
                 any_ok = True
                 loaded = self._load_results(result)
-                messages.append(
-                    f"Run '{result.run_id}' complete — {loaded} layer(s) added, grouped under "
-                    f"'{result.run_id}'."
+                lines.append(
+                    (
+                        "ok",
+                        f"Run <b>{escape(result.run_id)}</b> complete — {loaded} layer(s) added, "
+                        f"grouped under '{escape(result.run_id)}'.",
+                    )
                 )
             else:
-                messages.append(f"Run '{result.run_id}' failed: {result.error}")
+                lines.append(("error", self._failure_html(result)))
         if any_ok:
             self._progress.setValue(100)
             if self._loaded_frame_series:
-                messages.append(
-                    "Open View ▸ Panels ▸ Temporal Controller (animation mode) "
-                    "to step through the frames."
+                lines.append(
+                    (
+                        "info",
+                        "Open View ▸ Panels ▸ Temporal Controller (animation mode) to step "
+                        "through the frames.",
+                    )
                 )
-        self._set_status(" ".join(messages))
+        self._render_status(lines)
 
     def _report_sweep_finished(self, run_results: list[Any]) -> None:
         """Summarise a finished sweep without loading every run's layers.
@@ -726,23 +752,48 @@ class RunPage(QWidget):
         self._progress.setValue(100)
         ok = sum(1 for r in run_results if r.ok)
         failed = [r for r in run_results if not r.ok]
-        message = f"Sweep complete — {ok} of {len(run_results)} simulation(s) succeeded"
+        total = len(run_results)
+        lines: list[tuple[str, str]] = []
         if failed:
-            message += f", {len(failed)} failed"
+            lines.append(
+                (
+                    "warn",
+                    f"<b>Sweep complete</b> — {ok} of {total} succeeded, {len(failed)} failed.",
+                )
+            )
+        else:
+            lines.append(("ok", f"<b>Sweep complete</b> — all {total} simulation(s) succeeded."))
         if self._project_root_path:
-            message += f". Outputs are in '{self._project_root_path}' (with study.json)"
-        message += ". Use the Results page to inspect and aggregate them."
-        if failed:
-            preview = "; ".join(f"'{r.run_id}': {r.error}" for r in failed[:3])
-            message += f"  First failure(s): {preview}"
-        self._set_status(message)
+            lines.append(
+                (
+                    "info",
+                    f"Outputs in <code>{escape(self._project_root_path)}</code>. "
+                    "Use the Results page to inspect and aggregate them.",
+                )
+            )
+        for r in failed:
+            lines.append(("error", self._failure_html(r)))
+        self._render_status(lines)
+
+    def _failure_html(self, result: Any) -> str:
+        """One failed run as HTML: run id, error, and a clickable 'open log' link when present."""
+        err = str(result.error or "failed")
+        log_path: str | None = None
+        if "Full log:" in err:
+            err, log_path = (part.strip() for part in err.split("Full log:", 1))
+            err = err.rstrip(".")
+        html = f"<b>{escape(result.run_id)}</b> — {escape(err)}"
+        if log_path and os.path.exists(log_path):
+            href = QUrl.fromLocalFile(log_path).toString()
+            html += f' · <a href="{href}">open log</a>'
+        return html
 
     def _on_pipeline_failed(self, message: str) -> None:
         self._controller = None
         self._run_button.setEnabled(True)
         self._stop_button.setEnabled(False)
         self._progress_info.setText("")
-        self._set_status(f"Run could not execute: {message or 'terminated'}")
+        self._set_status(f"Run could not execute: {message or 'terminated'}", level="error")
 
     def _on_pipeline_stopped(self) -> None:
         self._controller = None
@@ -750,7 +801,7 @@ class RunPage(QWidget):
         self._stop_button.setEnabled(False)
         self._progress.setValue(0)
         self._progress_info.setText("")
-        self._set_status("Run stopped.")
+        self._set_status("Run stopped.", level="warn")
 
     def _load_results(self, result: Any) -> int:
         """Load a run's outputs into one layer-tree group named after the run.
@@ -935,8 +986,20 @@ class RunPage(QWidget):
                 return ramp
         return QgsGradientColorRamp(QColor(0, 0, 255), QColor(255, 0, 0))
 
-    def _set_status(self, text: str) -> None:
-        self._status.setText(text)
+    #: Status-line icons by level (info lines carry no icon).
+    _STATUS_ICONS: ClassVar[dict[str, str]] = {"ok": "✅", "warn": "⚠️", "error": "❌", "info": ""}
+
+    def _set_status(self, text: str, level: str = "info") -> None:
+        """Show a single status line (plain text, auto-escaped) tagged with ``level``'s icon."""
+        self._render_status([(level, escape(text))])
+
+    def _render_status(self, lines: list[tuple[str, str]]) -> None:
+        """Render ``(level, html)`` lines, one per row, each prefixed by its status icon."""
+        rows = [
+            f'<div style="margin:2px 0">{self._STATUS_ICONS.get(level, "")} {html}</div>'
+            for level, html in lines
+        ]
+        self._status.setHtml("".join(rows))
 
 
 class _ResampleJob:

@@ -207,7 +207,7 @@ def test_stop_button_disabled_until_run_and_noops_when_idle(
     # No run in flight: Stop is disabled, and clicking it just reports that nothing is running.
     assert page._stop_button.isEnabled() is False
     page._on_stop_clicked()
-    assert "No simulation is running" in page._status.text()
+    assert "No simulation is running" in page._status.toPlainText()
 
 
 def test_stop_cancels_running_task_and_kills_process(
