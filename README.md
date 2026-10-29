@@ -159,6 +159,13 @@ no launching QGIS from a terminal.
    `ELLIPSE` releases are defined numerically instead. For dampm the DEM must be an ESRI ASCII
    `.asc` and the release a polygon shapefile; load them into QGIS first.
 
+   - **Parameter sweep** — ticking **Enable parameter sweep** at the top reveals a **Sweep this
+     parameter** option on each *currently-visible* sweepable numeric parameter. Tick one to give
+     it a **range** and a **distribution** (Uniform or Normal) instead of a fixed value; the others
+     keep their set value. Because the option lives on the control itself, only parameters that
+     actually apply (per `visible_when`) are ever offered for sweeping. The sweep **method** (grid /
+     Latin hypercube / Monte Carlo, and its steps/samples/seed) is chosen on the **Study** page.
+
    - **DEM resolution** — under each raster picker the selected raster's native **resolution** is
      shown. Tick **Resample to** to coarsen/refine it to a chosen cell size with a chosen method
      (bilinear — a 2×2 kernel — by default; "average" is better for downsampling) and click
@@ -173,10 +180,12 @@ no launching QGIS from a terminal.
      release) the cell size × the released cells, with volume = area × depth (`h0`) or, for a
      raster, the summed per-cell depths × cell area. It refreshes automatically as you edit the
      release polygon — live while drawing/moving vertices and again on commit/save.
-2. **Run** — set a run name and output folder, choose which outputs to keep, and click **Run**.
+2. **Run** — set a **project name** and output folder, choose which outputs to keep, and click
+   **Run**. Everything for the project is written under one folder (see **Output layout** below).
    The run executes as a background **pipeline** of steps — any armed DEM resamples first, then
-   the simulation(s). The progress bar and the line beneath it describe the **whole batch**: the
-   current phase (e.g. *Resampling 'dem' to 2 m* or *Running 'run_001'*), elapsed time, an
+   (optionally) the inputs are copied into the project, then the simulation(s). The progress bar
+   and the line beneath it describe the **whole batch**: the
+   current phase (e.g. *Resampling 'dem' to 2 m* or *Running 'myproj_000001'*), elapsed time, an
    estimated time remaining and finish clock time, and — once sweeps run many simulations — a
    `step N/M` counter and a batch-wide finish estimate. The time remaining is estimated from the
    **recent** pace, not the whole-run average: a simulation reports progress as simulated time,
@@ -186,12 +195,34 @@ no launching QGIS from a terminal.
    coarse, deliberately-long **range** (e.g. *roughly 2 to 3 min left*) with no finish clock; once
    the estimate has converged it switches to a sharp countdown and a stable *finish ~HH:MM*. If any chosen input layer isn't saved to
    disk yet (a scratch/temporary or project-embedded layer), you're asked where to save it first,
-   since the model reads inputs from files. Each run's `runspec.json`, `simConfig.json` and
-   `result.json` are written into the output folder for provenance. **Stop** cancels the running
+   since the model reads inputs from files. **Stop** cancels the running
    step — it terminates the model process itself (not just the task wrapper), so a run stops
    immediately rather than finishing in the background.
 
-   On success, **all of a run's outputs are added under one layer group named after the run**:
+   **Output layout** — inside the chosen output folder a **project folder** (named by the project
+   name) holds everything:
+
+   ```
+   <output folder>/<project>/
+     inputs/                     the DEM and release layers the runs use (see "Copy inputs")
+     study.json                  (sweeps only) the scheme, seed and every run's params + weight
+     <project>_000001/           one folder per run (6-digit, so > 100 000 runs are fine)
+       runspec.json  simConfig.json  dampm_log.txt  result.json  provenance.json
+       raw/                      the model's rasters / particles
+     <project>_000002/  …
+   ```
+
+   - **Copy inputs** — when *Copy input layers into the project* is ticked (default), each input is
+     copied into `inputs/` (with its sidecar files) so the project is self-contained; an input that
+     already lives inside the project is left in place. Untick it to read inputs from where they are.
+   - A **deterministic** study produces one run folder (`<project>_000001`); a **sweep** produces
+     one per sample.
+   - **Provenance** — each run's `provenance.json` records the versions (release + git
+     commit/dirty/date) of the plugin, the almo-sweep engine and the dampm binary that produced it,
+     so a result is always traceable to the code that made it.
+
+   On success of a **single** run, **all of its outputs are added under one layer group named after
+   the run**:
    - **Multi-band rasters** (`final_grid`, `max_values`) are **unpacked into one single-band layer
      per band**, each in its own subgroup, rendered **single-band pseudocolor (Turbo)**.
    - A **series of raster frames** (`grid_series`) is loaded as **temporal groups** — one per band
@@ -199,6 +230,29 @@ no launching QGIS from a terminal.
      interval); the colour upper bound per band comes from `max_values.tif` (the run maxima), so
      colours are consistent across frames. Open **View ▸ Panels ▸ Temporal Controller** in
      animation mode to step/play through them.
+
+   A **sweep** is not auto-loaded onto the map (it can be hundreds of runs): the status line
+   reports how many succeeded and where the outputs are, and inspection/aggregation is left to the
+   Results page.
+
+### Study — the sweep method
+
+*Which* parameters vary (and over what range/distribution) is chosen on the **Parameters** page,
+beside the values. The **Study** page holds only the sweep **method** — it is active once the sweep
+is enabled on Parameters:
+
+- **Scheme** — how the combinations to simulate are chosen:
+  - **Grid (full factorial)** — each varied parameter is cut into equal **steps** (linear or
+    logarithmic) and *every* combination is run. The run count is the product of the steps, so it
+    grows fast; a live summary shows the total and warns when it is large.
+  - **Latin hypercube** — stratified, space-filling sampling; the run count is the **sample count**
+    you set, independent of how many parameters vary.
+  - **Monte Carlo** — random draws; again a fixed **sample count**. A **fixed seed** makes the draw
+    reproducible.
+- The per-parameter **distribution** (set on Parameters) is used only to **weight the results**
+  afterwards (e.g. a probability-weighted extent map — each run's weight is recorded in
+  `study.json`); it never changes *which* combinations are run. Parameters you don't vary stay at
+  their Parameters-page values.
 
 ---
 
@@ -212,8 +266,10 @@ almo_sweep_qgis/            the plugin package (this folder is what QGIS loads)
   metadata.txt              QGIS plugin metadata
   plugin.py                 AlmoSweepPlugin: menu/toolbar + dock lifecycle
   settings.py               per-model runtime settings (QgsSettings)
-  panels/                   main_panel, parameters_page (inputs + params), run_page,
-                            run_task, settings_dialog
+  state.py                  shared StudyState (manifest, inputs, params, sweep config)
+  sweep_plan.py             plain-data sweep config -> engine distributions + strategy; run count
+  panels/                   main_panel, parameters_page (inputs + params), study_page (sweep),
+                            run_page, run_pipeline, run_task, settings_dialog
   resources/icon.svg        toolbar icon
 tests/                      headless tests (run under QGIS's Python)
 ```
