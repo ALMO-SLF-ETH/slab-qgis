@@ -38,7 +38,7 @@ from qgis.core import (
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import QDate, QDateTime, QTime, QUrl
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -172,11 +172,16 @@ class RunPage(QWidget):
         root.addWidget(self._progress_info)
 
         # Rich, scrollable status/log: one line per message, each tagged with a status icon, and
-        # clickable "open log" links for failed runs.
+        # clickable "open log" links for failed runs. We handle clicks ourselves (setOpenLinks off)
+        # so a run log opens *inside* this view with a link back to the study summary, rather than
+        # the browser navigating away to the file with no way back.
         self._status = QTextBrowser()
-        self._status.setOpenExternalLinks(True)
+        self._status.setOpenLinks(False)
+        self._status.anchorClicked.connect(self._on_status_anchor)
         self._status.setMinimumHeight(90)
         root.addWidget(self._status, 1)
+        self._status_html = ""  # the current study/run summary, restored by the "back" link
+        self._current_log: str | None = None
 
     # -- launch ------------------------------------------------------------------------
     def _on_run_clicked(self) -> None:
@@ -999,7 +1004,34 @@ class RunPage(QWidget):
             f'<div style="margin:2px 0">{self._STATUS_ICONS.get(level, "")} {html}</div>'
             for level, html in lines
         ]
-        self._status.setHtml("".join(rows))
+        self._status_html = "".join(rows)  # remembered so the log view can return to it
+        self._status.setHtml(self._status_html)
+
+    def _on_status_anchor(self, url: QUrl) -> None:
+        """Handle a click in the status view: show a run log inline, or go back to the summary."""
+        target = url.toString()
+        if target == "almo:back":
+            self._status.setHtml(self._status_html)  # restore the study/run summary
+        elif target == "almo:editor" and self._current_log:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_log))  # open in the OS editor
+        elif url.isLocalFile():
+            self._show_log(url.toLocalFile())
+
+    def _show_log(self, path: str) -> None:
+        """Show a run's log inside the status view, with a link back to the study summary."""
+        self._current_log = path
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            text = f"(could not read log: {exc})"
+        if len(text) > 200_000:  # keep a very long log manageable in the panel
+            text = "… (truncated to the last 200 KB) …\n" + text[-200_000:]
+        name = escape(os.path.basename(path))
+        header = (
+            '<div style="margin:2px 0">⬅ <a href="almo:back">Back to study log</a> · '
+            f'<a href="almo:editor">open in editor</a> — <code>{name}</code></div>'
+        )
+        self._status.setHtml(f"{header}<pre style='white-space:pre-wrap'>{escape(text)}</pre>")
 
 
 class _ResampleJob:

@@ -23,6 +23,7 @@ from almo_sweep_qgis.panels.run_page import (
 from almo_sweep_qgis.panels.run_task import RunTask
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication, QgsProject
+from qgis.PyQt.QtCore import QUrl
 
 _TOY = Path(__file__).resolve().parents[2] / "almo-sweep" / "tests" / "fixtures" / "toy_model.py"
 
@@ -450,6 +451,25 @@ def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
     assert study["scheme"]["kind"] == "grid"
     assert len(study["samples"]) == 4
     assert abs(sum(s["weight"] for s in study["samples"]) - 1.0) < 1e-9
+
+
+def test_run_log_opens_inline_and_can_go_back(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    page = RunPage(StudyState())
+    page._render_status([("warn", "Sweep complete — 1 of 2 succeeded, 1 failed.")])
+    summary = page._status.toPlainText()
+    assert "Sweep complete" in summary
+
+    log = tmp_path / "dampm_log.txt"
+    log.write_text("line one\nline two\nboom\n", encoding="utf-8")
+
+    # Clicking a run's "open log" link shows the log inline, with a way back.
+    page._on_status_anchor(QUrl.fromLocalFile(str(log)))
+    shown = page._status.toPlainText()
+    assert "boom" in shown and "Back to study log" in shown
+
+    # Going back restores the study summary.
+    page._on_status_anchor(QUrl("almo:back"))
+    assert page._status.toPlainText() == summary
 
 
 def test_exec_group_visible_only_for_sweep(qgis_app: QgsApplication) -> None:
