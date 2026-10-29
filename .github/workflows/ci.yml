@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint (ruff, via pinned pre-commit hooks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Tests (QGIS ${{ matrix.qgis }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # LTR and the current release. QGIS ships the Python the plugin runs under; the code is
+        # written to the Qt5/Qt6 intersection, so both should pass.
+        qgis: ["release-3_40", "latest"]
+    container:
+      image: qgis/qgis:${{ matrix.qgis }}
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: QGIS_Simulation_GUI
+      - name: Checkout engine as a sibling
+        # The plugin tests import the almo-sweep engine; conftest puts a sibling ../almo-sweep/src
+        # on sys.path. If that repo is private, add a PAT with read access as ENGINE_REPO_TOKEN.
+        uses: actions/checkout@v4
+        with:
+          repository: dtiziano/almo-sweep
+          ref: dev
+          path: almo-sweep
+          token: ${{ secrets.ENGINE_REPO_TOKEN || github.token }}
+      - name: Install pytest into QGIS's Python
+        run: pip install pytest --break-system-packages || pip install pytest
+      - name: Run tests (headless)
+        working-directory: QGIS_Simulation_GUI
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: xvfb-run -a python3 -m pytest -q
+
+  package:
+    name: Package plugin zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build an installable plugin zip
+        # A QGIS plugin zip holds the package folder (with metadata.txt) at its root, so it installs
+        # via Plugins ▸ Install from ZIP.
+        run: zip -r almo_sweep_qgis.zip almo_sweep_qgis -x '*/__pycache__/*' '*.pyc'
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: almo_sweep_qgis-plugin
+          path: almo_sweep_qgis.zip
