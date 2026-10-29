@@ -91,7 +91,7 @@ class DemDownloadDialog(QDialog):
         form.addRow("Resampling:", resample_row)
 
         self._clip_check = QCheckBox("Clip output to the polygon (otherwise its bounding box)")
-        self._clip_check.setChecked(True)
+        self._clip_check.setChecked(False)
         form.addRow("", self._clip_check)
 
         self._out_widget = QgsFileWidget()
