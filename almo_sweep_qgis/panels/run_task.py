@@ -12,12 +12,73 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 from qgis.core import QgsTask
 
 from almo_sweep_qgis import engine, settings
+
+
+class SweepTask(QgsTask):
+    """Runs a whole sweep via ``engine.run_sweep`` off the main thread.
+
+    The run-specs are built on the main thread (they read layer sources) and handed in; this task
+    drives them through the engine scheduler with ``max_workers`` concurrency and ``retries``,
+    forwards batch progress as runs complete, writes the project run index, and collects the
+    per-run results. A Stop (task cancel) is shared by every run so the whole batch halts.
+    """
+
+    def __init__(
+        self,
+        manifest: Any,
+        sweep_runs: list[Any],
+        index: Any,
+        *,
+        max_workers: int = 1,
+        retries: int = 0,
+        description: str = "ALMO Sweep study",
+    ) -> None:
+        super().__init__(description, QgsTask.Flag.CanCancel)
+        self._manifest = manifest
+        self._sweep_runs = sweep_runs
+        self._index = index
+        self._max_workers = max_workers
+        self._retries = retries
+        self.results: list[Any] = []
+        self.error_message: str | None = None
+        self._done = 0
+        self._lock = threading.Lock()
+
+    def run(self) -> bool:
+        env = dict(os.environ)
+        env.update(settings.runtime_env(self._manifest))
+        try:
+            report = engine.run_sweep(
+                self._manifest,
+                self._sweep_runs,
+                max_workers=self._max_workers,
+                retries=self._retries,
+                env=env,
+                substitutions={"python": _qgis_python()},
+                tool_versions=_gui_tool_versions(),
+                cancel_check=self.isCanceled,
+                on_finished=self._on_run_finished,
+                index=self._index,
+            )
+        except Exception as exc:
+            self.error_message = str(exc)
+            return False
+        self.results = list(report.results)
+        return not self.isCanceled()
+
+    def _on_run_finished(self, _i: int, _result: Any) -> None:
+        total = len(self._sweep_runs) or 1
+        with self._lock:
+            self._done += 1
+            done = self._done
+        self.setProgress(min(100.0, done / total * 100.0))
 
 
 class RunTask(QgsTask):

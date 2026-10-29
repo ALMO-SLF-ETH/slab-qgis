@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from almo_sweep_qgis import engine
@@ -403,10 +404,7 @@ def _sweepable_manifest():
     )
 
 
-def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
-    qgis_app: QgsApplication, tmp_path: Path
-) -> None:
-    manifest = _sweepable_manifest()
+def _grid_sweep_state(manifest: Any) -> StudyState:
     state = StudyState()
     state.set_manifest(manifest)
     state.sweep = {
@@ -418,21 +416,33 @@ def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
         "seed": None,
         "params": {"scale": {"dist": "uniform", "low": 0.0, "high": 3.0}},
     }
-    page = RunPage(state)
+    return state
+
+
+def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    manifest = _sweepable_manifest()
+    page = RunPage(_grid_sweep_state(manifest))
     page._name_edit.setText("myproj")
     page._out_dir.setFilePath(str(tmp_path))
+    page._workers_spin.setValue(3)
+    page._retries_spin.setValue(2)
 
     project_root = page._project_root()
-    jobs = page._build_sweep_jobs(manifest, state.sweep, project_root)
-    assert len(jobs) == 4
+    jobs = page._build_sweep_jobs(manifest, page._state.sweep, project_root)
+    assert len(jobs) == 1  # one scheduler-driven job runs the whole sweep
 
-    # Each job builds a distinct, 6-digit-numbered run under <output>/myproj/.
-    first = jobs[0].make_task()._runspec
-    last = jobs[-1].make_task()._runspec
-    assert first.run_id == "myproj_000001"
-    assert last.run_id == "myproj_000004"
-    assert first.output_dir.endswith(os.path.join("myproj", "myproj_000001"))
-    assert first.params["scale"] == 0.0 and last.params["scale"] == 3.0  # grid endpoints
+    task = jobs[0].make_task()
+    runs = task._sweep_runs
+    assert len(runs) == 4
+    # Each sample is a distinct, 6-digit-numbered run under <output>/myproj/.
+    assert runs[0].runspec.run_id == "myproj_000001"
+    assert runs[-1].runspec.run_id == "myproj_000004"
+    assert runs[0].runspec.output_dir.endswith(os.path.join("myproj", "myproj_000001"))
+    assert runs[0].runspec.params["scale"] == 0.0 and runs[-1].runspec.params["scale"] == 3.0
+    # the Parallel-runs / Retries settings are carried into the scheduler task
+    assert task._max_workers == 3 and task._retries == 2
 
     study = json.loads((Path(project_root) / "study.json").read_text(encoding="utf-8"))
     assert study["project"] == "myproj"
@@ -440,6 +450,17 @@ def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
     assert study["scheme"]["kind"] == "grid"
     assert len(study["samples"]) == 4
     assert abs(sum(s["weight"] for s in study["samples"]) - 1.0) < 1e-9
+
+
+def test_exec_group_visible_only_for_sweep(qgis_app: QgsApplication) -> None:
+    manifest = _sweepable_manifest()
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = RunPage(state)
+    assert not page._exec_group.isVisibleTo(page)  # no sweep -> hidden
+    state.sweep = {**state.sweep, "enabled": True}
+    state.sweepChanged.emit()
+    assert page._exec_group.isVisibleTo(page)  # sweep on -> shown
 
 
 def test_is_within_detects_project_containment(tmp_path: Path) -> None:

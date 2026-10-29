@@ -49,6 +49,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -57,7 +58,7 @@ from almo_sweep_qgis import engine, settings, sweep_plan
 from almo_sweep_qgis.dem.resample import default_resampled_path, raster_resolution
 from almo_sweep_qgis.dem.style import apply_hillshade
 from almo_sweep_qgis.panels.run_pipeline import ResampleTask, RunController
-from almo_sweep_qgis.panels.run_task import RunTask
+from almo_sweep_qgis.panels.run_task import RunTask, SweepTask
 from almo_sweep_qgis.state import StudyState
 
 
@@ -100,6 +101,42 @@ class RunPage(QWidget):
         )
         form.addRow("", self._copy_inputs_check)
         root.addLayout(form)
+
+        # Study execution: how many runs execute at once, and how many times a failed run retries.
+        # Only relevant to a sweep, so the group is shown only while one is enabled.
+        self._exec_group = QGroupBox("Study execution")
+        exec_form = QFormLayout(self._exec_group)
+        self._workers_spin = QSpinBox()
+        cpu_cap = engine.default_max_workers() if engine.AVAILABLE else 1
+        cpu_cap = max(1, cpu_cap)
+        self._workers_spin.setRange(1, cpu_cap)
+        self._workers_spin.setValue(cpu_cap)  # default to all logical processors
+        self._workers_spin.setToolTip(
+            "How many simulations run at once (default: this machine's processor count). Each run "
+            "is a single-threaded process, so this many run truly in parallel. For strongly "
+            "CPU-bound work the physical core count (often half of this) can be a touch faster — "
+            "lower it to taste."
+        )
+        # Show the ceiling next to the field so the user knows the most they can ask for.
+        workers_row = QHBoxLayout()
+        workers_row.setContentsMargins(0, 0, 0, 0)
+        workers_row.addWidget(self._workers_spin)
+        max_label = QLabel(f"of {cpu_cap} available (processor count)")
+        max_label.setEnabled(False)  # muted hint
+        workers_row.addWidget(max_label)
+        workers_row.addStretch(1)
+        workers_container = QWidget()
+        workers_container.setLayout(workers_row)
+        exec_form.addRow("Parallel runs", workers_container)
+        self._retries_spin = QSpinBox()
+        self._retries_spin.setRange(0, 5)
+        self._retries_spin.setValue(0)
+        self._retries_spin.setToolTip("Re-attempt a failed run this many times before giving up.")
+        exec_form.addRow("Retries per run", self._retries_spin)
+        root.addWidget(self._exec_group)
+        state.sweepChanged.connect(self._sync_exec_group)
+        state.manifestChanged.connect(lambda _m: self._sync_exec_group())
+        self._sync_exec_group()
 
         # Outputs to store: rebuilt from the manifest. Non-optional outputs are always kept
         # (checked and disabled); optional ones the user may switch off.
@@ -546,39 +583,48 @@ class RunPage(QWidget):
     def _build_sweep_jobs(
         self, manifest: Any, sweep: dict[str, Any], project_root: str
     ) -> list[Any]:
-        """Expand the study into one run job per sample, and write the study's provenance.
+        """Expand the study into a single scheduler-driven job, and write the study plan.
 
-        Each sample becomes a ``_RunJob`` with its own run id, parameter values and output
-        sub-folder (``<project>/<project>_NNNNNN``). A ``study.json`` recording the scheme, seed and
-        every sample's parameters and weight is written into the project root, so a
-        probability-weighted map can be built from the results later.
+        Every sample gets its own run id and output sub-folder (``<project>/<project>_NNNNNN``);
+        the whole batch runs through the engine scheduler (one :class:`_SweepJob`) with the
+        Parallel-runs / Retries settings. ``study.json`` records the intended plan (scheme, seed and
+        each sample's parameters and weight); the engine writes ``runs.json`` as runs complete,
+        cataloguing their outcomes and weights for a later probability-weighted map.
         """
         plan = sweep_plan.build_plan(manifest, sweep, dict(self._state.param_values))
         if not plan.samples:
             raise ValueError("the sweep produced no samples — select a parameter to vary")
 
         os.makedirs(project_root, exist_ok=True)
-        jobs: list[Any] = []
+        samples: list[dict[str, Any]] = []
         records: list[dict[str, Any]] = []
         for i, sample in enumerate(plan.samples, start=1):
             run_id = self._run_id(i, plan.count)
-            out_dir = os.path.join(project_root, run_id)
             values = dict(sample.values)
-            jobs.append(
-                _RunJob(
-                    self,
-                    sample={
-                        "run_id": run_id,
-                        "params": values,
-                        "output_dir": out_dir,
-                        "weight": sample.weight,
-                    },
-                )
+            samples.append(
+                {
+                    "run_id": run_id,
+                    "params": values,
+                    "output_dir": os.path.join(project_root, run_id),
+                    "weight": sample.weight,
+                }
             )
             records.append({"run_id": run_id, "weight": sample.weight, "params": values})
 
         self._write_study_json(project_root, self._project_name(), plan, records)
-        return jobs
+        index = engine.default_index(
+            project_root, manifest, scheme=plan.describe, seed=plan.seed, count=plan.count
+        )
+        return [
+            _SweepJob(
+                self,
+                manifest,
+                samples,
+                index,
+                max_workers=self._workers_spin.value(),
+                retries=self._retries_spin.value(),
+            )
+        ]
 
     @staticmethod
     def _write_study_json(
@@ -619,6 +665,11 @@ class RunPage(QWidget):
     def _selected_outputs(self) -> list[str]:
         return [name for name, check in self._output_checks.items() if check.isChecked()]
 
+    def _sync_exec_group(self) -> None:
+        """Show the parallel-runs / retries controls only while a sweep is enabled."""
+        sweep = getattr(self._state, "sweep", {}) or {}
+        self._exec_group.setVisible(bool(sweep.get("enabled")))
+
     # -- pipeline (main thread) --------------------------------------------------------
     def _on_pipeline_progress(self, fraction: float, info: str) -> None:
         self._progress.setValue(round(fraction * 100.0))
@@ -629,7 +680,14 @@ class RunPage(QWidget):
         self._run_button.setEnabled(True)
         self._stop_button.setEnabled(False)
         self._progress_info.setText("")
-        run_results = [r for r in (results or []) if r is not None]
+        # A sweep job contributes a *list* of results (one per sample); a single run contributes one
+        # RunResult. Flatten either shape into one list of results.
+        run_results: list[Any] = []
+        for item in results or []:
+            if isinstance(item, list):
+                run_results.extend(r for r in item if r is not None)
+            elif item is not None:
+                run_results.append(item)
         if not run_results:
             self._set_status("Run finished, but produced no result.")
             return
@@ -943,6 +1001,59 @@ class _RunJob:
 
     def finalize(self) -> None:
         self.result = self._task.result if self._task is not None else None
+
+
+class _SweepJob:
+    """Pipeline step: run a whole sweep through the engine scheduler as one background task.
+
+    The per-sample run-specs are built here (main thread) so they see any inputs re-pointed by
+    earlier resample/copy steps, then handed to a :class:`SweepTask` that drives them with the
+    chosen concurrency and retries. ``result`` is the list of every run's :class:`RunResult`.
+    """
+
+    weight = 1.0
+
+    def __init__(
+        self,
+        page: RunPage,
+        manifest: Any,
+        samples: list[dict[str, Any]],
+        index: Any,
+        *,
+        max_workers: int,
+        retries: int,
+    ) -> None:
+        self._page = page
+        self._manifest = manifest
+        self._samples = samples
+        self._index = index
+        self._max_workers = max_workers
+        self._retries = retries
+        self.label = f"Running {len(samples)} simulations"
+        self.result: Any = None
+        self._task: SweepTask | None = None
+
+    def make_task(self) -> SweepTask:
+        sweep_runs = [
+            engine.SweepRun(
+                runspec=self._page._build_runspec(
+                    run_id=s["run_id"], params=s["params"], output_dir=s["output_dir"]
+                ),
+                weight=s["weight"],
+            )
+            for s in self._samples
+        ]
+        self._task = SweepTask(
+            self._manifest,
+            sweep_runs,
+            self._index,
+            max_workers=self._max_workers,
+            retries=self._retries,
+        )
+        return self._task
+
+    def finalize(self) -> None:
+        self.result = list(self._task.results) if self._task is not None else []
 
 
 class _CopyInputsTask(QgsTask):
