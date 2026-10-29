@@ -31,6 +31,10 @@ class StudyState(QObject):
     #: emits this so other pages (e.g. a future results view) can react.
     sweepChanged = pyqtSignal()
 
+    #: Emitted with a project root (``<output>/<project>``) when a run or sweep finishes there, so
+    #: the Results page can point itself at the project that was just simulated.
+    projectFinished = pyqtSignal(str)
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._manifest: Any | None = None
