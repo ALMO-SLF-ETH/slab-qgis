@@ -55,6 +55,7 @@ from almo_sweep_qgis.results.aggregate import (
     AggregateResult,
     aggregate_max_values,
 )
+from almo_sweep_qgis.results.load_run import load_run_outputs
 from almo_sweep_qgis.results.study import StudySummary, load_study
 from almo_sweep_qgis.state import StudyState
 
@@ -78,7 +79,6 @@ class ResultsPage(QWidget):
         super().__init__(parent)
         self._state = state
         self._summary: StudySummary | None = None
-        self._row_of: dict[str, int] = {}  # run_id -> table row
         self._task: _AggregateTask | None = None
 
         root = QVBoxLayout(self)
@@ -105,9 +105,20 @@ class ResultsPage(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Click a column header to sort by it (click again to flip ascending/descending). Numeric
+        # columns sort by value, not text, via _SortableItem (see below).
+        self._table.setSortingEnabled(True)
         root.addWidget(self._table, 1)
 
         row_actions = QHBoxLayout()
+        self._load_btn = QPushButton("Load full result")
+        self._load_btn.setToolTip(
+            "Load the selected run's complete outputs (max values and time series) onto the map, "
+            "just like a single run."
+        )
+        self._load_btn.clicked.connect(self._on_load_run)
+        self._load_btn.setEnabled(False)
+        row_actions.addWidget(self._load_btn)
         self._open_btn = QPushButton("Open run folder")
         self._open_btn.setToolTip("Open the selected run's folder in the file manager")
         self._open_btn.clicked.connect(self._on_open_folder)
@@ -115,9 +126,7 @@ class ResultsPage(QWidget):
         row_actions.addWidget(self._open_btn)
         row_actions.addStretch(1)
         root.addLayout(row_actions)
-        self._table.itemSelectionChanged.connect(
-            lambda: self._open_btn.setEnabled(self._selected_run() is not None)
-        )
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
 
         root.addWidget(self._build_hazard_group())
 
@@ -224,29 +233,32 @@ class ResultsPage(QWidget):
         swept_cols = [p.name for p in s.swept]
         swept_labels = [p.label for p in s.swept]
         headers = [*_BASE_HEAD, *swept_labels, *_METRIC_HEAD]
+        # Disable sorting while filling: with it on, each setItem would re-sort and shuffle the rows
+        # we are still writing. Re-enabled at the end; the table starts in run order until clicked.
+        self._table.setSortingEnabled(False)
         self._table.setColumnCount(len(headers))
         self._table.setHorizontalHeaderLabels(headers)
         self._table.setRowCount(len(s.runs))
-        self._row_of = {}
         for row, run in enumerate(s.runs):
-            self._row_of[run.run_id] = row
+            dur = "" if run.duration_s is None else f"{run.duration_s:.1f}"
             cells = [
-                run.run_id,
-                "✓" if run.ok else "✗",
-                f"{run.weight:.4g}",
-                *[_fmt(run.params.get(c)) for c in swept_cols],
-                "",  # Max depth (filled after aggregation)
-                "",  # Max velocity
-                "",  # Impacted area
-                "" if run.duration_s is None else f"{run.duration_s:.1f}",
-                run.error or "",
+                _text_cell(run.run_id),
+                _text_cell("✓" if run.ok else "✗"),
+                _num_cell(f"{run.weight:.4g}", run.weight),
+                *[_param_cell(run.params.get(c)) for c in swept_cols],
+                _num_cell("", None),  # Max depth (filled after aggregation)
+                _num_cell("", None),  # Max velocity
+                _num_cell("", None),  # Impacted area
+                _num_cell(dur, run.duration_s),
+                _text_cell(run.error or ""),
             ]
-            for col, text in enumerate(cells):
-                self._table.setItem(row, col, QTableWidgetItem(text))
+            for col, item in enumerate(cells):
+                self._table.setItem(row, col, item)
         header = self._table.horizontalHeader()
         if header is not None:
             header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._metric_base = len(_BASE_HEAD) + len(swept_cols)  # first metric column
+        self._table.setSortingEnabled(True)
 
     # -- aggregation -------------------------------------------------------------------
     def _on_compute(self) -> None:
@@ -300,13 +312,25 @@ class ResultsPage(QWidget):
 
     def _fill_metrics(self, result: AggregateResult) -> None:
         base = getattr(self, "_metric_base", len(_BASE_HEAD))
+        # Sorting may have moved rows since the table was built, so resolve each run's row by its id
+        # (column 0) rather than by a stored index. Pause sorting so the writes don't reshuffle.
+        self._table.setSortingEnabled(False)
         for run_id, m in result.per_run.items():
-            row = self._row_of.get(run_id)
+            row = self._row_for_run(run_id)
             if row is None:
                 continue
-            self._table.setItem(row, base, QTableWidgetItem(f"{m.max_height:.3g}"))
-            self._table.setItem(row, base + 1, QTableWidgetItem(f"{m.max_velocity:.3g}"))
-            self._table.setItem(row, base + 2, QTableWidgetItem(f"{m.impacted_area:.0f}"))
+            self._table.setItem(row, base, _num_cell(f"{m.max_height:.3g}", m.max_height))
+            self._table.setItem(row, base + 1, _num_cell(f"{m.max_velocity:.3g}", m.max_velocity))
+            self._table.setItem(row, base + 2, _num_cell(f"{m.impacted_area:.0f}", m.impacted_area))
+        self._table.setSortingEnabled(True)
+
+    def _row_for_run(self, run_id: str) -> int | None:
+        """The current visual row whose Run cell (column 0) holds ``run_id``, or None."""
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item is not None and item.text() == run_id:
+                return row
+        return None
 
     def _load_aggregate_layers(self, layers: dict[str, str]) -> int:
         project = QgsProject.instance()
@@ -373,6 +397,54 @@ class ResultsPage(QWidget):
         run_id = run_id_item.text()
         return next((r for r in self._summary.runs if r.run_id == run_id), None)
 
+    def _on_selection_changed(self) -> None:
+        run = self._selected_run()
+        self._open_btn.setEnabled(run is not None)
+        # Only a successful run has outputs to load.
+        self._load_btn.setEnabled(run is not None and run.ok)
+
+    def _on_load_run(self) -> None:
+        """Load the selected sweep run's complete outputs, exactly as a single run is loaded."""
+        run = self._selected_run()
+        if run is None:
+            return
+        outputs = run.outputs()
+        if not outputs:
+            self._set_status(
+                f"No outputs recorded for {run.run_id} (result.json missing or empty)."
+            )
+            return
+        outcome = load_run_outputs(
+            outputs,
+            run.run_id,
+            manifest=self._state.manifest,
+            output_dt=self._run_output_dt(run),
+        )
+        if outcome.layers == 0:
+            self._set_status(f"Could not load any layers for {run.run_id}.")
+            return
+        hint = (
+            " Open View ▸ Panels ▸ Temporal Controller (animation mode) to step through the frames."
+            if outcome.frame_series
+            else ""
+        )
+        self._set_status(
+            f"Loaded {run.run_id}: {outcome.layers} layer(s) added under '{run.run_id}'.{hint}"
+        )
+
+    def _run_output_dt(self, run: Any) -> float:
+        """Temporal frame spacing (s) for a run: its recorded value, else the manifest default."""
+        for source in (run.params, self._state.param_values):
+            value = source.get("output_dt")
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value:
+                return float(value)
+        manifest = self._state.manifest
+        spec = getattr(manifest, "params", {}).get("output_dt") if manifest is not None else None
+        default = getattr(spec, "default", None)
+        if isinstance(default, (int, float)) and not isinstance(default, bool) and default:
+            return float(default)
+        return 1.0
+
     def _on_open_folder(self) -> None:
         run = self._selected_run()
         if run is None:
@@ -429,3 +501,44 @@ def _fmt(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.4g}"
     return "" if value is None else str(value)
+
+
+#: Role on a table item holding its numeric sort key (None for text-only cells).
+_SORT_ROLE = Qt.ItemDataRole.UserRole
+
+
+class _SortableItem(QTableWidgetItem):
+    """A table cell that sorts by its numeric key when it has one, else by displayed text.
+
+    Qt's default ``QTableWidgetItem`` compares display strings, so "100" would sort before "9".
+    Numeric columns (weight, swept values, metrics, duration) store their value under
+    :data:`_SORT_ROLE` and compare on it; a blank numeric cell (no key) sorts after any value.
+    """
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        a = self.data(_SORT_ROLE)
+        b = other.data(_SORT_ROLE)
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return a < b
+        if isinstance(a, (int, float)) != isinstance(b, (int, float)):
+            # Keep rows with a value ahead of blank ones regardless of sort direction's base order.
+            return isinstance(a, (int, float))
+        return super().__lt__(other)
+
+
+def _text_cell(text: str) -> _SortableItem:
+    return _SortableItem(text)
+
+
+def _num_cell(text: str, value: float | int | None) -> _SortableItem:
+    item = _SortableItem(text)
+    if isinstance(value, (int, float)):
+        item.setData(_SORT_ROLE, float(value))
+    return item
+
+
+def _param_cell(value: Any) -> _SortableItem:
+    """A swept-parameter cell: numeric-sortable when the value is a number, else plain text."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _num_cell(_fmt(value), float(value))
+    return _text_cell(_fmt(value))

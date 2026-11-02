@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 
 import numpy as np
-from almo_sweep_qgis.panels.results_page import ResultsPage
+from almo_sweep_qgis.panels.results_page import ResultsPage, _num_cell
 from almo_sweep_qgis.results.aggregate import AggregateConfig, aggregate_max_values
 from almo_sweep_qgis.results.study import load_study
 from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
+from qgis.PyQt.QtCore import Qt
 
 GT = (0.0, 10.0, 0.0, 0.0, 0.0, -10.0)
 
@@ -94,6 +95,111 @@ def test_results_page_loads_and_populates(qgis_app: QgsApplication, tmp_path: Pa
     # the swept-parameter value appears in the first data row
     texts = {page._table.item(0, c).text() for c in range(page._table.columnCount())}
     assert "p_000001" in texts
+
+
+def test_table_sorting_is_enabled(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    _make_project(tmp_path)
+    page = ResultsPage(StudyState())
+    page._folder.setFilePath(str(tmp_path))
+    page._on_load()
+    assert page._table.isSortingEnabled()  # headers are clickable to sort
+
+
+def test_numeric_cells_sort_by_value_not_text(qgis_app: QgsApplication) -> None:
+    # The lexical trap: "10" < "9" as text, but 10 > 9 as numbers. _num_cell must sort numerically.
+    nine = _num_cell("9", 9.0)
+    ten = _num_cell("10", 10.0)
+    assert nine < ten
+    assert not (ten < nine)
+    # A blank numeric cell (no key) sorts after any value, regardless of direction.
+    blank = _num_cell("", None)
+    assert ten < blank
+    assert nine < blank
+
+
+def test_sorting_a_swept_column_reorders_rows(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    _make_project(tmp_path)
+    page = ResultsPage(StudyState())
+    page._folder.setFilePath(str(tmp_path))
+    page._on_load()
+    # Columns: Run, Status, Weight, <scale>, Max depth, ... -> the swept "scale" column is index 3.
+    scale_col = 3
+
+    page._table.sortItems(scale_col, Qt.SortOrder.AscendingOrder)
+    assert page._table.item(0, 0).text() == "p_000001"  # scale 1.0 first
+    page._table.sortItems(scale_col, Qt.SortOrder.DescendingOrder)
+    assert page._table.item(0, 0).text() == "p_000002"  # scale 5.0 first
+
+
+def test_metrics_fill_correct_run_after_sorting(qgis_app: QgsApplication, tmp_path: Path) -> None:
+    # After the user sorts, filling per-run metrics must still land on the right run's row.
+    from almo_sweep_qgis.results.aggregate import AggregateInput
+
+    _make_project(tmp_path)
+    page = ResultsPage(StudyState())
+    page._folder.setFilePath(str(tmp_path))
+    page._on_load()
+    page._table.sortItems(3, Qt.SortOrder.DescendingOrder)  # p_000002 (scale 5.0) now on top
+
+    summary = load_study(tmp_path)
+    inputs = [
+        AggregateInput(r.run_id, r.max_values_path(), r.weight) for r in summary.successful_runs()
+    ]
+    result = aggregate_max_values(inputs, tmp_path / "aggregates", AggregateConfig(threshold=0.1))
+    page._fill_metrics(result)
+
+    # Max depth for p_000002 is 5.0; its row is 0 after the descending sort.
+    base = page._metric_base
+    assert page._table.item(0, 0).text() == "p_000002"
+    assert page._table.item(0, base).text() == "5"
+
+
+def test_load_full_run_button_enabled_only_for_a_selected_successful_run(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    _make_project(tmp_path)
+    page = ResultsPage(StudyState())
+    page._folder.setFilePath(str(tmp_path))
+    page._on_load()
+    assert not page._load_btn.isEnabled()  # nothing selected yet
+    page._table.selectRow(0)
+    assert page._load_btn.isEnabled()  # a successful run is selected
+
+
+def test_load_full_run_loads_max_values_and_time_series(
+    qgis_app: QgsApplication, tmp_path: Path
+) -> None:
+    from qgis.core import QgsProject
+
+    _make_project(tmp_path)
+    # Give run p_000001 a grid_series directory of frames, and record it in its result.json so the
+    # Results page loads the full run (max values + time series) like a single run.
+    run_dir = tmp_path / "p_000001"
+    frames = run_dir / "grid_series"
+    frames.mkdir()
+    for i in range(3):
+        _write_maxvals(frames / f"t_{i:03d}.tif", [[0.0, 1.0 + i]], [[0.0, 0.5 * i]])
+    result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    result["outputs"]["grid_series"] = str(frames)
+    (run_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    page = ResultsPage(StudyState())
+    page._folder.setFilePath(str(tmp_path))
+    page._on_load()
+    page._table.selectRow(0 if page._table.item(0, 0).text() == "p_000001" else 1)
+    assert page._selected_run().run_id == "p_000001"
+
+    root = QgsProject.instance().layerTreeRoot()
+    assert root.findGroup("p_000001") is None
+    page._on_load_run()
+    group = root.findGroup("p_000001")
+    assert group is not None  # the run's outputs are grouped under its id
+    # max_values is unpacked per band, and the frames form temporal subgroups.
+    assert group.findGroup("max_values") is not None
+    series = group.findGroup("grid_series")
+    assert series is not None
+    assert series.findGroup("flow height h") is not None  # a temporal band subgroup
+    assert "p_000001" in page._status.text()
 
 
 def test_project_finished_sets_folder_and_loads(qgis_app: QgsApplication, tmp_path: Path) -> None:

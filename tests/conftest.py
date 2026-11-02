@@ -9,6 +9,7 @@ put on ``sys.path`` so the tests can exercise manifest-driven UI without a prior
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from collections.abc import Iterator
@@ -37,6 +38,20 @@ def qgis_app() -> Iterator[QgsApplication]:
     """Start a headless QGIS application once for the whole test session."""
     app = start_app()
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _clean_project() -> Iterator[None]:
+    """Reset the shared ``QgsProject`` between tests so map layers don't leak across them.
+
+    QGIS keeps one global project for the process; without this, layers (and layer-tree groups) a
+    test adds would be visible to later tests that scan ``mapLayers()`` (so they'd be order-bound).
+    """
+    from qgis.core import QgsProject
+
+    yield
+    with contextlib.suppress(Exception):
+        QgsProject.instance().clear()
 
 
 @pytest.fixture
