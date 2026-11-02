@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -367,6 +368,9 @@ class ParametersPage(QWidget):
             )
             field = _NumericParamField(spec, _param_label(spec), _with_unit(spin, spec.unit), spin)
             field.changed.connect(self._sync_sweep)
+            # A swept release parameter (e.g. depth) feeds the live estimate via its mean/bounds, so
+            # keep area/volume in step with the distribution editor too, not only fixed-value edits.
+            field.changed.connect(self._refresh_estimate)
             self._numeric_fields[spec.name] = field
             self._add_full_row(form, box, field, spec)
         else:
@@ -445,6 +449,9 @@ class ParametersPage(QWidget):
         for field in self._numeric_fields.values():
             field.set_sweep_mode(on)
         self._sync_sweep()
+        # Turning the sweep off reverts the estimate to fixed values; on, a swept depth may already
+        # be ticked, so recompute either way.
+        self._refresh_estimate()
 
     def _sync_sweep(self) -> None:
         """Publish the whole sweep config (enable, per-parameter selection, and method) to state.
@@ -595,19 +602,67 @@ class ParametersPage(QWidget):
         form.addRow("Volume", self._volume_label)
 
     def _refresh_estimate(self) -> None:
-        """Update the area/volume labels for the current release configuration."""
+        """Update the area/volume labels for the current release configuration.
+
+        When parameters are swept (probabilistic analysis) the estimate follows each swept
+        parameter's distribution: a Normal parameter contributes its *mean* (so the estimate is a
+        single central figure), while a Uniform parameter contributes its *low* and *high* bounds,
+        yielding a low-to-high range for area and volume. Fixed parameters use their set value.
+        """
         if self._area_label is None or self._volume_label is None:
             return  # model has no release section
-        est = estimate.compute_release_estimate(
-            self._state.param_values,
+        low_params, high_params, has_range = self._estimate_param_variants()
+        est_low = estimate.compute_release_estimate(
+            low_params,
             polygon_area_m2=self._polygon_area(),
             release_raster_path=self._release_raster_path(),
         )
-        self._area_label.setText(_fmt_area(est.area_m2))
-        self._volume_label.setText(_fmt_volume(est.volume_m3))
-        tip = est.detail or ""
+        if not has_range:
+            # Every relevant parameter resolves to a single value (fixed, or Normal→mean).
+            self._area_label.setText(_fmt_area(est_low.area_m2))
+            self._volume_label.setText(_fmt_volume(est_low.volume_m3))
+            tip = est_low.detail or ""
+        else:
+            est_high = estimate.compute_release_estimate(
+                high_params,
+                polygon_area_m2=self._polygon_area(),
+                release_raster_path=self._release_raster_path(),
+            )
+            self._area_label.setText(_fmt_range(est_low.area_m2, est_high.area_m2, _fmt_area))
+            self._volume_label.setText(
+                _fmt_range(est_low.volume_m3, est_high.volume_m3, _fmt_volume)
+            )
+            note = "low-to-high range over Uniform-swept parameters"
+            base = est_low.detail or ""
+            tip = f"{base}; {note}" if base else note
         self._area_label.setToolTip(tip)
         self._volume_label.setToolTip(tip)
+
+    def _estimate_param_variants(self) -> tuple[dict[str, Any], dict[str, Any], bool]:
+        """Build the "low" and "high" parameter dicts the estimate is evaluated at.
+
+        Both start from the current fixed values. For each *visible, swept* numeric parameter a
+        Normal distribution pins both dicts to its mean; a Uniform distribution sets the low dict
+        to its ``low`` bound and the high dict to its ``high`` bound. Returns the two dicts plus a
+        flag that is true when at least one Uniform-swept parameter makes the two differ.
+        """
+        current = self._state.param_values
+        low = dict(current)
+        high = dict(current)
+        has_range = False
+        for name, field in self._numeric_fields.items():
+            if not (field.is_swept() and field.spec.is_visible(current)):
+                continue
+            entry = field.sweep_entry()
+            if entry.get("dist") == "normal":
+                mean = entry.get("mean")
+                low[name] = mean
+                high[name] = mean
+            else:  # uniform
+                low[name] = entry.get("low")
+                high[name] = entry.get("high")
+                has_range = True
+        return low, high, has_range
 
     def _polygon_area(self) -> float | None:
         """Total planar area (CRS units²) of the selected release-zone polygon layer, if any."""
@@ -696,6 +751,23 @@ def _fmt_volume(volume: float | None) -> str:
     if abs(volume) >= 1.0e6:  # also give an easier-to-read Mm³ for large releases
         return f"{volume:,.0f} m³  ({volume / 1.0e6:,.2f} Mm³)"
     return f"{volume:,.1f} m³"
+
+
+def _fmt_range(
+    a: float | None, b: float | None, fmt: Callable[[float | None], str]
+) -> str:
+    """Format two endpoint estimates as a 'low to high' range using ``fmt``.
+
+    The bounds are ordered (``min``/``max``) because a parameter need not be monotonic increasing
+    in the estimate: a larger minimum release depth, for instance, releases *fewer* raster cells.
+    When both endpoints coincide (or either is missing) it collapses to a single formatted value.
+    """
+    if a is None or b is None:
+        return fmt(a if b is None else b)
+    lo, hi = (a, b) if a <= b else (b, a)
+    if lo == hi:
+        return fmt(lo)
+    return f"{fmt(lo)} to {fmt(hi)}"
 
 
 def _local_raster_path(layer: QgsRasterLayer | None) -> str | None:

@@ -360,6 +360,47 @@ def test_release_estimate_lives_in_release_group_and_updates(qgis_app: QgsApplic
 
 
 @pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+def test_release_estimate_uses_mean_for_normal_and_range_for_uniform(
+    qgis_app: QgsApplication,
+) -> None:
+    # When release depth (h0) is swept, the estimate follows its distribution: Normal -> mean
+    # (a single central figure); Uniform -> a low-high range for the depth-dependent volume.
+    assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
+    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    state = StudyState()
+    state.set_manifest(manifest)
+    page = ParametersPage(state)
+
+    page._set_param("release_type", "RECTANGLE")
+    page._set_param("rect_Lx", 4.0)
+    page._set_param("rect_Ly", 3.0)  # fixed footprint -> area is 12 m^2 throughout
+    assert page._volume_label is not None and page._area_label is not None
+
+    page._sweep_toggle.setChecked(True)
+    h0 = page._numeric_fields["h0"]
+    h0._check.setChecked(True)
+    assert h0._editor._dist.currentData() == "normal"  # Normal is the default profile
+    h0._editor._mean.setValue(2.0)
+    # Normal -> mean: a single central estimate, 12 m^2 x 2 m = 24 m^3.
+    assert "24.0 m" in page._volume_label.text()
+    assert " to " not in page._volume_label.text()
+
+    # Uniform -> a low-to-high range over the bounds: 12 x 1 = 12 m^3 to 12 x 3 = 36 m^3.
+    h0._editor._dist.setCurrentIndex(h0._editor._dist.findData("uniform"))
+    h0._editor._low.setValue(1.0)
+    h0._editor._high.setValue(3.0)
+    assert "12.0 m" in page._area_label.text()  # depth does not change the footprint
+    assert " to " in page._volume_label.text()
+    assert "12.0 m³" in page._volume_label.text()
+    assert "36.0 m³" in page._volume_label.text()
+
+    # Turning the sweep off reverts to the fixed depth (default 2.0 m) -> single 24 m^3 again.
+    page._sweep_toggle.setChecked(False)
+    assert "24.0 m" in page._volume_label.text()
+    assert " to " not in page._volume_label.text()
+
+
+@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
 def test_release_estimate_updates_when_polygon_is_edited_and_committed(
     qgis_app: QgsApplication,
 ) -> None:
