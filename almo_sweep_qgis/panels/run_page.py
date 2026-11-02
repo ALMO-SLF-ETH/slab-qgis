@@ -9,7 +9,6 @@ project when it finishes.
 from __future__ import annotations
 
 import contextlib
-import glob
 import hashlib
 import json
 import os
@@ -20,25 +19,19 @@ from typing import Any, ClassVar
 
 from qgis.core import (
     QgsApplication,
-    QgsBilinearRasterResampler,
     QgsCoordinateTransformContext,
     QgsDataProvider,
-    QgsDateTimeRange,
-    QgsGradientColorRamp,
     QgsProject,
     QgsRasterFileWriter,
     QgsRasterLayer,
-    QgsRasterLayerTemporalProperties,
     QgsRasterPipe,
-    QgsSingleBandPseudoColorRenderer,
-    QgsStyle,
     QgsTask,
     QgsVectorFileWriter,
     QgsVectorLayer,
 )
 from qgis.gui import QgsFileWidget
-from qgis.PyQt.QtCore import QDate, QDateTime, QTime, QUrl
-from qgis.PyQt.QtGui import QColor, QDesktopServices
+from qgis.PyQt.QtCore import QUrl
+from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -61,6 +54,7 @@ from almo_sweep_qgis.dem.resample import default_resampled_path, raster_resoluti
 from almo_sweep_qgis.dem.style import apply_hillshade
 from almo_sweep_qgis.panels.run_pipeline import ResampleTask, RunController
 from almo_sweep_qgis.panels.run_task import RunTask, SweepTask
+from almo_sweep_qgis.results import load_run
 from almo_sweep_qgis.state import StudyState
 
 
@@ -808,188 +802,31 @@ class RunPage(QWidget):
         self._progress_info.setText("")
         self._set_status("Run stopped.", level="warn")
 
+    def _output_dt(self) -> float:
+        """Temporal frame spacing (seconds) for this run, from the parameters when exposed."""
+        return float(self._state.param_values.get("output_dt", 1.0) or 1.0)
+
     def _load_results(self, result: Any) -> int:
-        """Load a run's outputs into one layer-tree group named after the run.
-
-        Inside that group: ``grid_series`` as temporal subgroups (stepable in time), and the
-        multi-band rasters (``final_grid``, ``max_values``) each unpacked into one single-band
-        pseudocolour layer per band, under their own subgroup.
-        """
-        manifest = self._state.manifest
-        project = QgsProject.instance()
-        self._loaded_frame_series = False
-        outputs = dict(result.outputs)
-        max_values_path = outputs.get("max_values")
-
-        run_group = project.layerTreeRoot().insertGroup(0, str(result.run_id))
-        loaded = 0
-        for name, path in outputs.items():
-            if os.path.isdir(path):
-                # A directory of raster frames -> temporal subgroup (e.g. dampm's grid_series).
-                loaded += self._load_frame_series(name, path, max_values_path, run_group)
-                continue
-            kind = manifest.outputs[name].kind if (manifest and name in manifest.outputs) else None
-            if kind == "vector":
-                vlayer = QgsVectorLayer(path, name, "ogr")
-                if vlayer.isValid():
-                    project.addMapLayer(vlayer, False)
-                    run_group.addLayer(vlayer)
-                    loaded += 1
-                continue
-            loaded += self._load_banded_raster(name, path, run_group)
-
-        if loaded == 0:
-            project.layerTreeRoot().removeChildNode(run_group)  # nothing loaded -> no empty group
-        return loaded
-
-    def _load_banded_raster(self, name: str, path: str, run_group: Any) -> int:
-        """Unpack a multi-band raster into one single-band pseudocolour layer per band.
-
-        The per-band layers go in a subgroup named after the output (e.g. ``final_grid`` with its
-        h / v_2D / mass / v_x / v_y / v_z bands, ``max_values`` with h_max / v_2D_max). Band names
-        come from the file's band descriptions when present.
-        """
-        probe = QgsRasterLayer(path, name)
-        if not probe.isValid():
-            return 0
-        project = QgsProject.instance()
-        ramp = self._turbo_ramp()
-        subgroup = run_group.addGroup(name)
-        count = 0
-        for band in range(1, probe.bandCount() + 1):
-            layer = QgsRasterLayer(path, f"{name} — {probe.bandName(band)}")
-            if not layer.isValid():
-                continue
-            self._style_singleband(layer, band, ramp)
-            project.addMapLayer(layer, False)
-            subgroup.addLayer(layer)
-            count += 1
-        if count == 0:
-            run_group.removeChildNode(subgroup)
-        return count
-
-    def _style_singleband(
-        self, layer: QgsRasterLayer, band: int, ramp: Any, upper: float | None = None
-    ) -> None:
-        """Render ``band`` as single-band pseudocolour (Turbo) with bilinear display resampling."""
-        dp = layer.dataProvider()
-        dp.setNoDataValue(band, -9999.0)  # dampm's nodata sentinel
-        renderer = QgsSingleBandPseudoColorRenderer(dp, band)
-        lo, hi = 0.0, upper
-        if hi is None:
-            with contextlib.suppress(Exception):
-                stats = dp.bandStatistics(band)
-                lo, hi = stats.minimumValue, stats.maximumValue
-        renderer.setClassificationMin(float(lo))
-        if hi is not None and hi > lo:
-            renderer.setClassificationMax(float(hi))
-        renderer.createShader(ramp.clone())
-        layer.setRenderer(renderer)
-        resampler = layer.resampleFilter()
-        if resampler is not None:
-            resampler.setZoomedInResampler(QgsBilinearRasterResampler())
-            resampler.setZoomedOutResampler(QgsBilinearRasterResampler())
-
-    #: Frame-raster bands to present as temporal groups: (band index, subgroup label). Matches
-    #: dampm's grid rasters (band 1 = flow height h, band 2 = 2D speed v).
-    _FRAME_BANDS = ((1, "flow height h"), (2, "velocity v_2D"))
+        """Load a run's outputs onto the map (shared with the Results page's single-run load)."""
+        outcome = load_run.load_run_outputs(
+            dict(result.outputs),
+            result.run_id,
+            manifest=self._state.manifest,
+            output_dt=self._output_dt(),
+        )
+        self._loaded_frame_series = outcome.frame_series
+        return outcome.layers
 
     def _load_frame_series(
         self, name: str, folder: str, max_values_path: str | None, run_group: Any
     ) -> int:
-        """Load a folder of raster frames as temporal subgroups (inside ``run_group``).
-
-        A ``name`` subgroup (e.g. ``grid_series``) holds one subgroup per band in
-        :attr:`_FRAME_BANDS`, each frame a timestamp (spaced by the model's output interval).
-        Frames are single-band pseudocolour (**Turbo**); the per-band colour upper bound is taken
-        from ``max_values.tif`` (the run maxima), so colours are consistent across frames and equal
-        to the run's true maximum. Times map onto a dummy datetime axis (QGIS has no 'elapsed
-        seconds' axis); spacing uses ``output_dt`` from the parameters when exposed, else 1/frame.
-        """
-        frames = sorted(glob.glob(os.path.join(folder, "*.tif")))
-        if len(frames) < 2:
-            return 0  # not a stepable series
-
-        project = QgsProject.instance()
-        spacing_s = float(self._state.param_values.get("output_dt", 1.0) or 1.0)
-        base = QDateTime(QDate(2000, 1, 1), QTime(0, 0, 0))
-        mode = (
-            getattr(QgsRasterLayerTemporalProperties, "ModeFixedTemporalRange", None)
-            or QgsRasterLayerTemporalProperties.TemporalMode.ModeFixedTemporalRange
+        """Load a folder of raster frames as temporal subgroups (see :mod:`results.load_run`)."""
+        total = load_run._load_frame_series(
+            name, folder, max_values_path, run_group, self._output_dt()
         )
-        ramp = self._turbo_ramp()
-        uppers = self._band_upper_bounds(max_values_path, [b for b, _ in self._FRAME_BANDS])
-
-        parent = run_group.addGroup(name)
-        total = 0
-        for band, blabel in self._FRAME_BANDS:
-            # upper colour bound: from max_values.tif, else the frames' own max for this band
-            upper = uppers.get(band)
-            if upper is None:
-                upper = self._frames_band_max(frames, band)
-            subgroup = parent.addGroup(blabel)
-            for i, path in enumerate(frames):
-                layer = QgsRasterLayer(path, f"t = {i * spacing_s:g} s")
-                if not layer.isValid() or layer.bandCount() < band:
-                    continue
-                self._style_singleband(layer, band, ramp, upper if upper and upper > 0 else None)
-
-                tp = layer.temporalProperties()
-                tp.setIsActive(True)
-                tp.setMode(mode)
-                start = base.addMSecs(int(i * spacing_s * 1000))
-                end = base.addMSecs(int((i + 1) * spacing_s * 1000))
-                # Half-open [start, end): adjacent frames must not share the boundary instant,
-                # otherwise both render at that timestamp. (includeBeginning=True, includeEnd=False)
-                tp.setFixedTemporalRange(QgsDateTimeRange(start, end, True, False))
-
-                project.addMapLayer(layer, False)
-                subgroup.addLayer(layer)
-                total += 1
-
         if total:
             self._loaded_frame_series = True
-        else:
-            run_group.removeChildNode(parent)
         return total
-
-    def _band_upper_bounds(self, max_values_path: str | None, bands: list[int]) -> dict[int, float]:
-        """Per-band colour upper bounds from ``max_values.tif`` (band i max = run maximum)."""
-        bounds: dict[int, float] = {}
-        if not max_values_path or not os.path.isfile(max_values_path):
-            return bounds
-        mv = QgsRasterLayer(max_values_path, "max_values")
-        if not mv.isValid():
-            return bounds
-        dp = mv.dataProvider()
-        for band in bands:
-            if band <= dp.bandCount():
-                with contextlib.suppress(Exception):
-                    bounds[band] = dp.bandStatistics(band).maximumValue
-        return bounds
-
-    @staticmethod
-    def _frames_band_max(frames: list[str], band: int) -> float | None:
-        """Largest value of ``band`` across all frames (fallback when max_values is absent)."""
-        result: float | None = None
-        for path in frames:
-            layer = QgsRasterLayer(path, "f")
-            if not layer.isValid() or layer.bandCount() < band:
-                continue
-            with contextlib.suppress(Exception):
-                m = layer.dataProvider().bandStatistics(band).maximumValue
-                result = m if result is None else max(result, m)
-        return result
-
-    @staticmethod
-    def _turbo_ramp() -> Any:
-        """The Turbo colour ramp (falling back to other perceptual ramps, then a gradient)."""
-        style = QgsStyle.defaultStyle()
-        for n in ("Turbo", "Viridis", "Spectral"):
-            ramp = style.colorRamp(n)
-            if ramp is not None:
-                return ramp
-        return QgsGradientColorRamp(QColor(0, 0, 255), QColor(255, 0, 0))
 
     #: Status-line icons by level (info lines carry no icon).
     _STATUS_ICONS: ClassVar[dict[str, str]] = {"ok": "✅", "warn": "⚠️", "error": "❌", "info": ""}

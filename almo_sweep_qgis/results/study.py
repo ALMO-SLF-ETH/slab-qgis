@@ -61,10 +61,20 @@ class RunRecord:
     def ok(self) -> bool:
         return self.status == "success"
 
+    def outputs(self) -> dict[str, str]:
+        """All of the run's outputs (name -> path), read from its ``result.json``.
+
+        This is the same ``outputs`` mapping a single deterministic run records, so the Results page
+        can load one sweep run exactly as the Run page loads a single run. Empty if the file is
+        missing or unreadable (e.g. a failed run)."""
+        raw = _read_json(Path(self.output_dir) / RESULT_FILENAME).get("outputs", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}
+
     def max_values_path(self) -> str | None:
         """The run's ``max_values`` raster, read from its ``result.json`` (``None`` if absent)."""
-        outputs = _read_json(Path(self.output_dir) / RESULT_FILENAME).get("outputs", {})
-        path = outputs.get("max_values") if isinstance(outputs, dict) else None
+        path = self.outputs().get("max_values")
         return path if isinstance(path, str) else None
 
 
