@@ -1,7 +1,8 @@
 """Pre-processing tab: model-independent data preparation before a study.
 
-For now it hosts the DEM download tool (fetch and merge a DEM for a region from an online
-provider). It is the home for further preparation tools (clipping, reprojection, …) as they land.
+Hosts the DEM download tool (fetch and merge a DEM for a region from an online provider) and the
+release-raster builder (turn polygons into a release-depth raster for a RASTER release). It is the
+home for further preparation tools (clipping, reprojection, …) as they land.
 """
 
 from __future__ import annotations
@@ -37,6 +38,21 @@ class PreprocessingPage(QWidget):
         box.addWidget(self._dem_button)
         root.addWidget(dem)
 
+        release = QGroupBox("Release")
+        rbox = QVBoxLayout(release)
+        rcaption = QLabel(
+            "Turn a polygon layer into a release-depth raster: extrude the polygons to a chosen "
+            "depth, optionally round the corners and feather the depth to the edges, for use as a "
+            "RASTER release."
+        )
+        rcaption.setWordWrap(True)
+        rcaption.setEnabled(False)
+        rbox.addWidget(rcaption)
+        self._release_button = QPushButton("Build release raster from polygons…")
+        self._release_button.clicked.connect(self._open_release_raster)
+        rbox.addWidget(self._release_button)
+        root.addWidget(release)
+
         root.addStretch(1)
         root.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -44,3 +60,8 @@ class PreprocessingPage(QWidget):
         from almo_sweep_qgis.panels.dem_download_dialog import DemDownloadDialog
 
         DemDownloadDialog(self).exec()
+
+    def _open_release_raster(self) -> None:
+        from almo_sweep_qgis.panels.release_raster_dialog import ReleaseRasterDialog
+
+        ReleaseRasterDialog(self).exec()
