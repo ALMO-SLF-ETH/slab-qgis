@@ -176,6 +176,9 @@ class RunPage(QWidget):
         root.addWidget(self._status, 1)
         self._status_html = ""  # the current study/run summary, restored by the "back" link
         self._current_log: str | None = None
+        #: A failed single run whose outputs the user may still choose to load ("load results
+        #: anyway"); set when a single run fails, cleared when a new run starts. Never auto-loaded.
+        self._loadable_failed: Any | None = None
 
     # -- launch ------------------------------------------------------------------------
     def _on_run_clicked(self) -> None:
@@ -223,6 +226,7 @@ class RunPage(QWidget):
             return
         self._project_root_path = project_root
         self._inputs_override = {}
+        self._loadable_failed = None  # a prior run's "load anyway" offer no longer applies
 
         # Build the batch of background steps, in order:
         #   1. any armed raster resamples (re-point inputs to the resampled rasters),
@@ -728,7 +732,10 @@ class RunPage(QWidget):
                     )
                 )
             else:
-                lines.append(("error", self._failure_html(result)))
+                # A failed single run: offer to load its outputs anyway (do not auto-load). The
+                # model may have written (some of) its rasters before failing.
+                self._loadable_failed = result
+                lines.append(("error", self._failure_html(result, allow_load=True)))
         if any_ok:
             self._progress.setValue(100)
             if self._loaded_frame_series:
@@ -774,8 +781,9 @@ class RunPage(QWidget):
             lines.append(("error", self._failure_html(r)))
         self._render_status(lines)
 
-    def _failure_html(self, result: Any) -> str:
-        """One failed run as HTML: run id, error, and a clickable 'open log' link when present."""
+    def _failure_html(self, result: Any, *, allow_load: bool = False) -> str:
+        """One failed run as HTML: run id, error, a clickable 'open log' link when present, and
+        (when ``allow_load``) a 'load results anyway' link that loads whatever the run produced."""
         err = str(result.error or "failed")
         log_path: str | None = None
         if "Full log:" in err:
@@ -785,6 +793,8 @@ class RunPage(QWidget):
         if log_path and os.path.exists(log_path):
             href = QUrl.fromLocalFile(log_path).toString()
             html += f' · <a href="{href}">open log</a>'
+        if allow_load:
+            html += ' · <a href="almo:load-anyway">load results anyway</a>'
         return html
 
     def _on_pipeline_failed(self, message: str) -> None:
@@ -817,13 +827,9 @@ class RunPage(QWidget):
         self._loaded_frame_series = outcome.frame_series
         return outcome.layers
 
-    def _load_frame_series(
-        self, name: str, folder: str, max_values_path: str | None, run_group: Any
-    ) -> int:
+    def _load_frame_series(self, name: str, folder: str, run_group: Any) -> int:
         """Load a folder of raster frames as temporal subgroups (see :mod:`results.load_run`)."""
-        total = load_run._load_frame_series(
-            name, folder, max_values_path, run_group, self._output_dt()
-        )
+        total = load_run._load_frame_series(name, folder, run_group, self._output_dt())
         if total:
             self._loaded_frame_series = True
         return total
@@ -849,10 +855,61 @@ class RunPage(QWidget):
         target = url.toString()
         if target == "almo:back":
             self._status.setHtml(self._status_html)  # restore the study/run summary
+        elif target == "almo:load-anyway":
+            self._load_failed_result()
         elif target == "almo:editor" and self._current_log:
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_log))  # open in the OS editor
         elif url.isLocalFile():
             self._show_log(url.toLocalFile())
+
+    def _load_failed_result(self) -> None:
+        """Load a failed single run's outputs onto the map, as if it had succeeded.
+
+        Only invoked when the user clicks "load results anyway" on a failed run — a failed run is
+        never loaded automatically. The run's ``result.json`` lists no outputs, so they are
+        recovered by scanning the run folder (:func:`load_run.discover_outputs`); the loaded layers
+        are flagged as coming from a failed run, which may be incomplete.
+        """
+        result = self._loadable_failed
+        if result is None:
+            return
+        run_dir = os.path.join(self._project_root_path or "", result.run_id)
+        outputs = dict(getattr(result, "outputs", {})) or load_run.discover_outputs(run_dir)
+        failure_line = ("error", self._failure_html(result))  # keep the failure + open-log link
+        if not outputs:
+            none_found = f"No output files were found in <code>{escape(run_dir)}</code> to load."
+            self._render_status([failure_line, ("warn", none_found)])
+            return
+        outcome = load_run.load_run_outputs(
+            outputs,
+            result.run_id,
+            manifest=self._state.manifest,
+            output_dt=self._output_dt(),
+        )
+        self._loaded_frame_series = outcome.frame_series
+        with contextlib.suppress(Exception):  # point the Results page at the project too
+            self._state.projectFinished.emit(self._project_root())
+        lines: list[tuple[str, str]] = [failure_line]
+        if outcome.layers == 0:
+            lines.append(("warn", f"<b>{escape(result.run_id)}</b> produced no loadable layers."))
+        else:
+            lines.append(
+                (
+                    "warn",
+                    f"Loaded the failed run's outputs anyway — {outcome.layers} layer(s) added, "
+                    f"grouped under '{escape(result.run_id)}'. Results may be incomplete.",
+                )
+            )
+            if outcome.frame_series:
+                lines.append(
+                    (
+                        "info",
+                        "Open View ▸ Panels ▸ Temporal Controller (animation mode) to step "
+                        "through the frames.",
+                    )
+                )
+        self._loadable_failed = None  # offer consumed; loading again would duplicate the layers
+        self._render_status(lines)
 
     def _show_log(self, path: str) -> None:
         """Show a run's log inside the status view, with a link back to the study summary."""

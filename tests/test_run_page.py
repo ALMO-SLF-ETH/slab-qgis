@@ -664,6 +664,65 @@ def _write_raster(path: str, bands: list[float]) -> None:
     ds = None
 
 
+def test_discover_outputs_recovers_a_failed_run_from_disk(tmp_path: Path) -> None:
+    from almo_sweep_qgis.results import load_run
+
+    # A failed run leaves artefacts under <run>/raw/ even though result.json lists no outputs.
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "rasters_frame_00.tif").write_bytes(b"f0")
+    (raw / "rasters_frame_01.tif").write_bytes(b"f1")
+    (raw / "max_values.tif").write_bytes(b"mv")
+    (raw / "particles_frame_00.ply").write_bytes(b"p0")
+
+    found = load_run.discover_outputs(str(tmp_path))
+    assert found["max_values"] == str(raw / "max_values.tif")
+    assert found["final_grid"] == str(raw / "rasters_frame_01.tif")  # last frame
+    assert found["grid_series"] == str(raw)  # the folder of frames
+    assert found["particles"] == str(raw)
+
+    # A folder with nothing recognisable yields no outputs.
+    assert load_run.discover_outputs(str(tmp_path / "does-not-exist")) == {}
+
+
+def test_failed_single_run_offers_load_anyway_and_loads_on_click(
+    qgis_app: QgsApplication, toy_manifest, tmp_path: Path
+) -> None:
+    pytest.importorskip("osgeo")
+    from almo_sweep.contracts import RunResult
+
+    # Simulate a finished pipeline carrying one failed single run whose model still wrote a raster.
+    run_dir = tmp_path / "proj" / "proj_000001"
+    raw = run_dir / "raw"
+    raw.mkdir(parents=True)
+    _write_raster(str(raw / "max_values.tif"), [1.0, 2.0])  # 2-band -> 2 single-band layers
+
+    state = StudyState()
+    state.set_manifest(toy_manifest)
+    page = RunPage(state)
+    page._name_edit.setText("proj")
+    page._out_dir.setFilePath(str(tmp_path))
+    page._project_root_path = str(tmp_path / "proj")
+    page._is_sweep = False
+
+    failed = RunResult.failure("proj_000001", "dampm crashed. Full log: nope.txt")
+    page._on_pipeline_finished([failed])
+
+    # The failure is reported with a "load results anyway" link, and nothing was auto-loaded.
+    html = page._status_html
+    assert "almo:load-anyway" in html
+    assert page._loadable_failed is failed
+    assert QgsProject.instance().layerTreeRoot().findGroup("proj_000001") is None
+
+    # Clicking the link loads the recovered outputs under the run's group.
+    page._on_status_anchor(QUrl("almo:load-anyway"))
+    group = QgsProject.instance().layerTreeRoot().findGroup("proj_000001")
+    assert group is not None
+    assert "loaded the failed run's outputs anyway" in page._status.toPlainText().lower()
+    # The offer is consumed, so a second click does not duplicate the layers.
+    assert page._loadable_failed is None
+
+
 def test_frame_series_loads_two_turbo_temporal_groups(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
@@ -672,11 +731,9 @@ def test_frame_series_loads_two_turbo_temporal_groups(
 
     frames = tmp_path / "rasters"
     frames.mkdir()
-    for k in range(3):  # 2-band frames: band1 (h), band2 (v)
+    # 2-band frames: band1 (h) spans 0..2 across the series, band2 (v) spans 0..20.
+    for k in range(3):
         _write_raster(str(frames / f"rasters_frame_0{k}.tif"), [float(k), float(k) * 10.0])
-    # per-cell maxima over the run -> drive the colour upper bounds (band1=2, band2=20)
-    max_values = tmp_path / "max_values.tif"
-    _write_raster(str(max_values), [2.0, 20.0])
 
     state = StudyState()
     state.set_manifest(toy_manifest)
@@ -684,7 +741,7 @@ def test_frame_series_loads_two_turbo_temporal_groups(
     page = RunPage(state)
 
     run_group = QgsProject.instance().layerTreeRoot().insertGroup(0, "run1")
-    n = page._load_frame_series("grid_series", str(frames), str(max_values), run_group)
+    n = page._load_frame_series("grid_series", str(frames), run_group)
     assert n == 6  # 3 frames x 2 bands (h + v)
     assert page._loaded_frame_series is True
     # the frames live under run1 > grid_series > <band> subgroups
@@ -698,8 +755,11 @@ def test_frame_series_loads_two_turbo_temporal_groups(
     ]
     assert len(pseudo) >= 6
     assert all(lyr.temporalProperties().isActive() for lyr in pseudo)
-    # colour upper bound comes from max_values: band 1 -> 2.0, band 2 -> 20.0
+    # Every frame in a band's group shares that band's ensemble range across all frames:
+    # band 1 -> [0, 2], band 2 -> [0, 20] (Turbo, min and max pinned to the group ensemble).
     band1 = [lyr for lyr in pseudo if lyr.renderer().band() == 1]
     band2 = [lyr for lyr in pseudo if lyr.renderer().band() == 2]
+    assert band1 and all(abs(lyr.renderer().classificationMin() - 0.0) < 1e-6 for lyr in band1)
     assert band1 and all(abs(lyr.renderer().classificationMax() - 2.0) < 1e-6 for lyr in band1)
+    assert band2 and all(abs(lyr.renderer().classificationMin() - 0.0) < 1e-6 for lyr in band2)
     assert band2 and all(abs(lyr.renderer().classificationMax() - 20.0) < 1e-6 for lyr in band2)
