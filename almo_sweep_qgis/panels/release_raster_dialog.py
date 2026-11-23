@@ -141,9 +141,7 @@ class ReleaseRasterDialog(QDialog):
             )
             return None
         source = (
-            layer.getSelectedFeatures()
-            if layer.selectedFeatureCount() > 0
-            else layer.getFeatures()
+            layer.getSelectedFeatures() if layer.selectedFeatureCount() > 0 else layer.getFeatures()
         )
         wkts = [f.geometry().asWkt() for f in source if not f.geometry().isEmpty()]
         if not wkts:

@@ -48,9 +48,7 @@ def test_flat_slab_fills_polygon_and_zeros_outside(tmp_path: Path) -> None:
     out = str(tmp_path / "release.tif")
     poly = _square_wkt(100.0, 100.0, 140.0, 140.0)  # 40 x 40 m square
 
-    res = build_release_raster(
-        [poly], _crs_wkt(), out, height_m=5.0, resolution_m=1.0
-    )
+    res = build_release_raster([poly], _crs_wkt(), out, height_m=5.0, resolution_m=1.0)
 
     assert res.max_height_m == pytest.approx(5.0)
     assert res.material_cells == pytest.approx(40 * 40, rel=0.05)  # ~1600 cells

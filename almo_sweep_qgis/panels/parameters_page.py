@@ -758,9 +758,7 @@ def _fmt_volume(volume: float | None) -> str:
     return f"{volume:,.1f} m³"
 
 
-def _fmt_range(
-    a: float | None, b: float | None, fmt: Callable[[float | None], str]
-) -> str:
+def _fmt_range(a: float | None, b: float | None, fmt: Callable[[float | None], str]) -> str:
     """Format two endpoint estimates as a 'low to high' range using ``fmt``.
 
     The bounds are ordered (``min``/``max``) because a parameter need not be monotonic increasing

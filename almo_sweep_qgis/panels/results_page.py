@@ -70,7 +70,11 @@ _LAYER_LABELS = {
 #: Base (non-metric) table columns; swept-parameter columns are inserted between Weight and these.
 _BASE_HEAD = ("Run", "Status", "Weight")
 _METRIC_HEAD = (
-    "Max depth (m)", "Max velocity (m/s)", "Impacted area (m²)", "Duration (s)", "Error",
+    "Max depth (m)",
+    "Max velocity (m/s)",
+    "Impacted area (m²)",
+    "Duration (s)",
+    "Error",
 )
 
 
