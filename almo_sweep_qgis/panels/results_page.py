@@ -69,7 +69,9 @@ _LAYER_LABELS = {
 }
 #: Base (non-metric) table columns; swept-parameter columns are inserted between Weight and these.
 _BASE_HEAD = ("Run", "Status", "Weight")
-_METRIC_HEAD = ("Max depth", "Max velocity", "Impacted area", "Duration (s)", "Error")
+_METRIC_HEAD = (
+    "Max depth (m)", "Max velocity (m/s)", "Impacted area (m²)", "Duration (s)", "Error",
+)
 
 
 class ResultsPage(QWidget):
@@ -212,7 +214,7 @@ class ResultsPage(QWidget):
             + f" · Runs: {s.n_total} (✓ {s.n_success} / ✗ {s.n_failed})",
         ]
         if s.swept:
-            swept = "; ".join(f"{p.label} ~ {p.summary()}" for p in s.swept)
+            swept = "; ".join(f"{p.header} ~ {p.summary()}" for p in s.swept)
             lines.append(f"Swept: {swept}")
         if s.total_duration_s:
             lines.append(f"Total compute time: {s.total_duration_s:.0f} s")
@@ -231,7 +233,7 @@ class ResultsPage(QWidget):
         if s is None:
             return
         swept_cols = [p.name for p in s.swept]
-        swept_labels = [p.label for p in s.swept]
+        swept_labels = [p.header for p in s.swept]
         headers = [*_BASE_HEAD, *swept_labels, *_METRIC_HEAD]
         # Disable sorting while filling: with it on, each setItem would re-sort and shuffle the rows
         # we are still writing. Re-enabled at the end; the table starts in run order until clicked.

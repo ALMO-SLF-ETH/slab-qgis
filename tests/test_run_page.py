@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from almo_sweep_qgis import engine
+from almo_sweep_qgis import engine, run_naming
 from almo_sweep_qgis.panels.run_page import (
     RunPage,
     _copy_dataset,
@@ -648,6 +648,90 @@ def test_gui_tool_versions_reports_the_plugin(qgis_app: QgsApplication) -> None:
     assert gui["name"] == "almo_sweep_qgis"
     assert gui["version"] is not None  # read from the plugin's metadata.txt
     assert set(gui) >= {"name", "version", "commit", "dirty", "date"}
+
+
+def test_naming_group_has_defaults_and_shows_a_preview(qgis_app: QgsApplication) -> None:
+    from almo_sweep_qgis import settings
+
+    page = RunPage(StudyState())
+    assert page._run_name_edit.text() == settings.DEFAULT_RUN_NAME
+    assert page._date_format_edit.text() == settings.DEFAULT_DATE_FORMAT
+    assert page._time_format_edit.text() == settings.DEFAULT_TIME_FORMAT
+    assert page._name_preview.text().startswith("Next run folder:")
+
+
+def test_single_run_records_runs_json_and_study(
+    qgis_app: QgsApplication, toy_manifest, tmp_path: Path
+) -> None:
+    from almo_sweep.contracts import RunResult
+
+    state = StudyState()
+    state.set_manifest(toy_manifest)
+    page = RunPage(state)
+    page._name_edit.setText("proj")
+    page._out_dir.setFilePath(str(tmp_path))
+    page._project_root_path = str(tmp_path / "proj")
+    os.makedirs(page._project_root_path, exist_ok=True)
+
+    # First manual run, as _on_run_clicked would have captured it, then recorded on finish.
+    page._single_run_counter = 1
+    page._single_run_params = {"scale": 1.0}
+    page._record_single_run(RunResult.success("proj_000001", {"grid": "g.tif"}))
+
+    runs_json = Path(page._project_root_path) / "runs.json"
+    doc = json.loads(runs_json.read_text(encoding="utf-8"))
+    assert [r["run_id"] for r in doc["runs"]] == ["proj_000001"]
+    assert doc["runs"][0]["counter"] == 1
+    assert doc["runs"][0]["status"] == "success"
+    assert doc["study"]["scheme"] == "manual"
+
+    # A minimal study.json is written so the Results page can read it as a (manual) study.
+    study = json.loads((Path(page._project_root_path) / "study.json").read_text(encoding="utf-8"))
+    assert study["scheme"] == "manual" and study["project"] == "proj"
+
+    # A second manual run appends (does not overwrite) and keeps its own counter.
+    page._single_run_counter = 2
+    page._record_single_run(RunResult.failure("proj_000002", "boom"))
+    doc = json.loads(runs_json.read_text(encoding="utf-8"))
+    assert [r["run_id"] for r in doc["runs"]] == ["proj_000001", "proj_000002"]
+    assert doc["runs"][1]["status"] == "failed" and doc["runs"][1]["counter"] == 2
+
+
+def test_consecutive_single_runs_get_unique_folders(
+    qgis_app: QgsApplication, toy_manifest, tmp_path: Path
+) -> None:
+    from almo_sweep.contracts import RunResult
+
+    state = StudyState()
+    state.set_manifest(toy_manifest)
+    page = RunPage(state)
+    page._name_edit.setText("proj")
+    page._out_dir.setFilePath(str(tmp_path))
+    project_root = page._project_root()
+
+    # Resolve the first run's id, "execute" it (create its folder + record it), then resolve again:
+    # the counter must advance so the second run lands in a new folder.
+    first, c1 = run_naming.resolve_run_id(
+        project_root,
+        template="PROJECT_RUNCOUNTER",
+        project="proj",
+        date_format="YYYY_MM_DD",
+        time_format="hh_mm_ss",
+    )
+    os.makedirs(os.path.join(project_root, first), exist_ok=True)
+    page._project_root_path = project_root
+    page._single_run_counter = c1
+    page._record_single_run(RunResult.success(first, {}))
+
+    second, c2 = run_naming.resolve_run_id(
+        project_root,
+        template="PROJECT_RUNCOUNTER",
+        project="proj",
+        date_format="YYYY_MM_DD",
+        time_format="hh_mm_ss",
+    )
+    assert first == "proj_000001" and second == "proj_000002"
+    assert c2 == 2
 
 
 def _write_raster(path: str, bands: list[float]) -> None:

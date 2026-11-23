@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import shutil
+from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any, ClassVar
@@ -49,7 +50,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import engine, settings, sweep_plan
+from almo_sweep_qgis import engine, run_naming, settings, sweep_plan
 from almo_sweep_qgis.dem.resample import default_resampled_path, raster_resolution
 from almo_sweep_qgis.dem.style import apply_hillshade
 from almo_sweep_qgis.panels.run_pipeline import ResampleTask, RunController
@@ -69,6 +70,10 @@ class RunPage(QWidget):
         self._loaded_frame_series = False
         self._is_sweep = False  # whether the launched batch is a parameter sweep
         self._project_root_path: str | None = None  # the current run's project folder (summary)
+        #: The incremental counter and launched parameters of the current single run, captured at
+        #: launch so the run can be recorded in the project's ``runs.json`` when it finishes.
+        self._single_run_counter: int | None = None
+        self._single_run_params: dict[str, Any] = {}
         #: input name -> path to feed the run(s), overriding the layer's own source. Set by the
         #: copy-inputs step (and left empty when inputs are used in place).
         self._inputs_override: dict[str, str] = {}
@@ -80,6 +85,7 @@ class RunPage(QWidget):
         self._out_dir = QgsFileWidget()
         self._out_dir.setStorageMode(QgsFileWidget.StorageMode.GetDirectory)
         self._out_dir.setDialogTitle("Choose an output folder")
+        self._out_dir.fileChanged.connect(lambda _p: self._update_name_preview())
         form.addRow("Output folder", self._out_dir)
 
         self._name_edit = QLineEdit("project")
@@ -87,6 +93,7 @@ class RunPage(QWidget):
             "A folder with this name is created in the output folder; each run goes in its own "
             "sub-folder (<project>_000001, …)."
         )
+        self._name_edit.textChanged.connect(self._update_name_preview)
         form.addRow("Project name", self._name_edit)
 
         self._copy_inputs_check = QCheckBox("Copy input layers into the project (inputs/)")
@@ -97,6 +104,8 @@ class RunPage(QWidget):
         )
         form.addRow("", self._copy_inputs_check)
         root.addLayout(form)
+
+        self._build_naming_group(root)
 
         # Study execution: how many runs execute at once, and how many times a failed run retries.
         # Only relevant to a sweep, so the group is shown only while one is enabled.
@@ -247,7 +256,21 @@ class RunPage(QWidget):
                 self._set_status(f"Cannot start the sweep: {exc}", level="error")
                 return
         else:
-            run_id = self._run_id(1, 1)
+            template, date_fmt, time_fmt = self._naming_choices()
+            self._persist_naming()
+            try:
+                run_id, counter = run_naming.resolve_run_id(
+                    project_root,
+                    template=template,
+                    project=self._project_name(),
+                    date_format=date_fmt,
+                    time_format=time_fmt,
+                )
+            except Exception as exc:
+                self._set_status(f"Invalid run name — fix the naming and try again: {exc}", "warn")
+                return
+            self._single_run_counter = counter
+            self._single_run_params = dict(self._state.param_values)
             jobs.append(
                 _RunJob(
                     self,
@@ -452,6 +475,105 @@ class RunPage(QWidget):
         base = self._out_dir.filePath().strip() or os.path.expanduser("~")
         name = "".join(c if c.isalnum() or c in "-_." else "_" for c in layer.name()) or "layer"
         return os.path.join(base, name + (".tif" if is_raster else ".gpkg"))
+
+    # -- run naming --------------------------------------------------------------------
+    def _build_naming_group(self, root: QVBoxLayout) -> None:
+        """A 'Run naming' group: a template + date/time formats for naming single runs' folders.
+
+        Each single run is given its own, uniquely-named sub-folder (never overwriting a previous
+        one) and appended to the project's ``runs.json``, so a series of manual runs can be loaded
+        as a sweep on the Results page. The template/formats are remembered across sessions.
+        """
+        group = QGroupBox("Run naming")
+        group.setToolTip(
+            "Applies to single runs. Each run goes in its own, uniquely-named sub-folder and is "
+            "recorded in the project's runs.json, so manual runs can be loaded as a sweep on the "
+            "Results page."
+        )
+        form = QFormLayout(group)
+
+        self._run_name_edit = QLineEdit(settings.run_name_template())
+        self._run_name_edit.setToolTip(
+            "Template for each single run's folder name. Placeholders (upper-case): PROJECT, DATE, "
+            "TIME, DATETIME, RUNCOUNTER (an incremental number per project). Other text is kept "
+            "as-is, e.g. blatten_slush_DATE_TIME_RUNCOUNTER."
+        )
+        self._run_name_edit.textChanged.connect(self._update_name_preview)
+        self._run_name_edit.editingFinished.connect(self._persist_naming)
+        form.addRow("Run name", self._run_name_edit)
+
+        self._date_format_edit = QLineEdit(settings.date_format())
+        self._date_format_edit.setToolTip(
+            "Format for the DATE placeholder. Tokens: YYYY, YY, MM (month), DD. Default YYYY_MM_DD."
+        )
+        self._date_format_edit.textChanged.connect(self._update_name_preview)
+        self._date_format_edit.editingFinished.connect(self._persist_naming)
+        form.addRow("Date format", self._date_format_edit)
+
+        self._time_format_edit = QLineEdit(settings.time_format())
+        self._time_format_edit.setToolTip(
+            "Format for the TIME placeholder. Tokens: hh/HH (24-hour), mm (minute), ss. "
+            "Default hh_mm_ss."
+        )
+        self._time_format_edit.textChanged.connect(self._update_name_preview)
+        self._time_format_edit.editingFinished.connect(self._persist_naming)
+        form.addRow("Time format", self._time_format_edit)
+
+        self._name_preview = QLabel("")
+        self._name_preview.setEnabled(False)  # muted hint
+        self._name_preview.setWordWrap(True)
+        form.addRow("", self._name_preview)
+
+        root.addWidget(group)
+        self._update_name_preview()
+
+    def _persist_naming(self) -> None:
+        """Remember the template and date/time formats as the defaults for next time."""
+        settings.set_run_name_template(self._run_name_edit.text())
+        settings.set_date_format(self._date_format_edit.text())
+        settings.set_time_format(self._time_format_edit.text())
+
+    def _naming_choices(self) -> tuple[str, str, str]:
+        """The current (template, date_format, time_format), each falling back to its default."""
+        return (
+            self._run_name_edit.text().strip() or settings.DEFAULT_RUN_NAME,
+            self._date_format_edit.text().strip() or settings.DEFAULT_DATE_FORMAT,
+            self._time_format_edit.text().strip() or settings.DEFAULT_TIME_FORMAT,
+        )
+
+    def _update_name_preview(self, _text: str = "") -> None:
+        """Show the folder name the next single run would get, for the current template/formats."""
+        if not hasattr(self, "_name_preview"):
+            return  # called before the naming group is built
+        template, date_fmt, time_fmt = self._naming_choices()
+        project = self._project_name()
+        base = self._out_dir.filePath().strip()
+        now = datetime.now()
+        try:
+            if base:
+                run_id, _counter = run_naming.resolve_run_id(
+                    os.path.join(base, project),
+                    template=template,
+                    project=project,
+                    date_format=date_fmt,
+                    time_format=time_fmt,
+                    now=now,
+                )
+            else:
+                run_id = run_naming.expand_run_name(
+                    template,
+                    project=project,
+                    counter=1,
+                    now=now,
+                    date_format=date_fmt,
+                    time_format=time_fmt,
+                )
+                if "RUNCOUNTER" not in template:
+                    width = run_naming.COUNTER_WIDTH
+                    run_id = run_naming.sanitize_run_id(f"{run_id}_{1:0{width}d}")
+            self._name_preview.setText(f"Next run folder: {run_id}")
+        except Exception as exc:  # a bad format string, etc. — show it rather than crash
+            self._name_preview.setText(f"Invalid naming: {exc}")
 
     # -- project / run folder layout ---------------------------------------------------
     def _project_name(self) -> str:
@@ -661,6 +783,70 @@ class RunPage(QWidget):
         with contextlib.suppress(OSError), open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
 
+    # -- single-run index (manual runs catalogued like a sweep) ------------------------
+    def _record_single_run(self, result: Any) -> None:
+        """Append one finished single run to ``<project>/runs.json`` (best-effort).
+
+        This makes a series of manual runs into one project look like a sweep: each run is a new,
+        uniquely-named folder and a new entry in ``runs.json``, so the Results page can browse,
+        compare and aggregate them. Never fails the run over a recording error."""
+        project_root = self._project_root_path
+        if not project_root or not engine.AVAILABLE:
+            return
+        try:
+            index = engine.RunIndex.load_or_create(
+                os.path.join(project_root, "runs.json"),
+                manifest=self._manifest_meta(),
+                study={"project": self._project_name(), "scheme": "manual"},
+            )
+            index.add(
+                engine.run_entry(
+                    run_id=result.run_id,
+                    status="success" if result.ok else "failed",
+                    output_dir=os.path.join(project_root, result.run_id),
+                    params=dict(self._single_run_params),
+                    weight=1.0,
+                    duration_s=getattr(result, "duration_s", None),
+                    error=getattr(result, "error", None),
+                    counter=self._single_run_counter,
+                )
+            )
+            self._ensure_manual_study_json(project_root)
+        except Exception:
+            pass  # recording is best-effort; the run itself already succeeded/failed on its own
+        # The next run's counter has advanced — refresh the preview.
+        self._update_name_preview()
+
+    def _manifest_meta(self) -> dict[str, Any]:
+        """The ``name``/``version``/``sha256`` of the current model, for the run index's header."""
+        manifest = self._state.manifest
+        if manifest is None:
+            return {}
+        return {
+            "name": getattr(manifest, "name", ""),
+            "version": getattr(manifest, "version", ""),
+            "sha256": getattr(manifest, "source_sha256", ""),
+        }
+
+    def _ensure_manual_study_json(self, project_root: str) -> None:
+        """Write a minimal ``study.json`` for a manual-run collection, only if none exists.
+
+        It lets the Results page show the project name and a 'manual' scheme. It is never written
+        over a real sweep's ``study.json`` (which carries the swept-parameter distributions)."""
+        path = os.path.join(project_root, "study.json")
+        if os.path.exists(path):
+            return
+        # ``scheme_key`` is what the Results header reads (a plain label); ``scheme`` mirrors it.
+        data = {
+            "project": self._project_name(),
+            "scheme": "manual",
+            "scheme_key": "manual",
+            "swept": {},
+            "samples": [],
+        }
+        with contextlib.suppress(OSError), open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+
     # -- output selection --------------------------------------------------------------
     def _rebuild_outputs(self, manifest: Any | None) -> None:
         while self._outputs_layout.count():
@@ -717,10 +903,12 @@ class RunPage(QWidget):
         if self._is_sweep:
             self._report_sweep_finished(run_results)
             return
-        # A single deterministic run: load its outputs onto the map.
+        # A single deterministic run: record it in the project's runs.json (so it can be loaded as
+        # a sweep on the Results page), then load its outputs onto the map.
         lines: list[tuple[str, str]] = []
         any_ok = False
         for result in run_results:
+            self._record_single_run(result)
             if result.ok:
                 any_ok = True
                 loaded = self._load_results(result)

@@ -311,6 +311,11 @@ class ParametersPage(QWidget):
                 self._add_estimate_rows(form)
             self._groups_layout.addWidget(box)
 
+        # Absorb any leftover vertical space at the bottom so the groups stay packed at the top at
+        # their natural height. Without this, the resizable scroll area stretches the host to fill
+        # the viewport and the QVBoxLayout spreads that slack into every group box (big empty gaps).
+        self._groups_layout.addStretch(1)
+
         self._apply_visibility()
         self._refresh_estimate()
         self._building = False

@@ -29,6 +29,12 @@ class SweptParam:
     name: str
     label: str
     spec: dict[str, Any]
+    unit: str = ""
+
+    @property
+    def header(self) -> str:
+        """Column header: the label with its unit appended, e.g. ``dt_max (s)``."""
+        return f"{self.label} ({self.unit})" if self.unit else self.label
 
     def summary(self) -> str:
         """A one-line description, e.g. ``Normal(mean=25, std=3) in [20, 30]``."""
@@ -140,8 +146,9 @@ def load_study(project_root: str | Path, manifest: Any | None = None) -> StudySu
 
     runs = [_run_record(r, root) for r in index.get("runs", []) if isinstance(r, dict)]
     labels = _param_labels(manifest)
+    units = _param_units(manifest)
     swept = [
-        SweptParam(name=name, label=labels.get(name, name), spec=spec)
+        SweptParam(name=name, label=labels.get(name, name), spec=spec, unit=units.get(name, ""))
         for name, spec in (study.get("swept") or {}).items()
         if isinstance(spec, dict)
     ]
@@ -192,6 +199,16 @@ def _param_labels(manifest: Any | None) -> dict[str, str]:
     for name, spec in getattr(manifest, "params", {}).items():
         labels[name] = getattr(spec, "display_label", None) or getattr(spec, "label", None) or name
     return labels
+
+
+def _param_units(manifest: Any | None) -> dict[str, str]:
+    """Each manifest parameter's unit (e.g. ``s`` for ``dt_max``); empty when not declared."""
+    if manifest is None:
+        return {}
+    units: dict[str, str] = {}
+    for name, spec in getattr(manifest, "params", {}).items():
+        units[name] = getattr(spec, "unit", None) or ""
+    return units
 
 
 def _first_provenance(runs: list[RunRecord]) -> dict[str, Any]:

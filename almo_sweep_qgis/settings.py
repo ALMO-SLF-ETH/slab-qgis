@@ -17,6 +17,20 @@ _PREFIX = "almo_sweep/runtime"
 _MODELS_KEY = "almo_sweep/models"
 _LAST_MODEL_KEY = "almo_sweep/last_model"
 
+# ---------------------------------------------------------------------------
+# Run naming: the template and date/time formats used to name single runs'
+# output folders (so manual runs behave like a sweep -- each a new folder).
+# ---------------------------------------------------------------------------
+_RUN_NAME_KEY = "almo_sweep/naming/run_name"
+_DATE_FORMAT_KEY = "almo_sweep/naming/date_format"
+_TIME_FORMAT_KEY = "almo_sweep/naming/time_format"
+
+#: Defaults. The run name uses bare placeholders (PROJECT, DATE, TIME, RUNCOUNTER); the date/time
+#: formats use friendly tokens (YYYY/MM/DD, hh/mm/ss) translated to strftime in ``run_naming``.
+DEFAULT_RUN_NAME = "PROJECT_RUNCOUNTER"
+DEFAULT_DATE_FORMAT = "YYYY_MM_DD"
+DEFAULT_TIME_FORMAT = "hh_mm_ss"
+
 
 def _key(model_name: str, var: str) -> str:
     return f"{_PREFIX}/{model_name}/{var}"
@@ -70,6 +84,33 @@ def last_model() -> str:
 
 def set_last_model(path: str) -> None:
     QgsSettings().setValue(_LAST_MODEL_KEY, path)
+
+
+def run_name_template() -> str:
+    """The template that names a single run's output folder (see :mod:`run_naming`)."""
+    return str(QgsSettings().value(_RUN_NAME_KEY, DEFAULT_RUN_NAME) or DEFAULT_RUN_NAME)
+
+
+def set_run_name_template(value: str) -> None:
+    QgsSettings().setValue(_RUN_NAME_KEY, value.strip() or DEFAULT_RUN_NAME)
+
+
+def date_format() -> str:
+    """The user's date format for the ``DATE`` placeholder (friendly tokens like ``YYYY_MM_DD``)."""
+    return str(QgsSettings().value(_DATE_FORMAT_KEY, DEFAULT_DATE_FORMAT) or DEFAULT_DATE_FORMAT)
+
+
+def set_date_format(value: str) -> None:
+    QgsSettings().setValue(_DATE_FORMAT_KEY, value.strip() or DEFAULT_DATE_FORMAT)
+
+
+def time_format() -> str:
+    """The user's time format for the ``TIME`` placeholder (friendly tokens, e.g. ``hh_mm_ss``)."""
+    return str(QgsSettings().value(_TIME_FORMAT_KEY, DEFAULT_TIME_FORMAT) or DEFAULT_TIME_FORMAT)
+
+
+def set_time_format(value: str) -> None:
+    QgsSettings().setValue(_TIME_FORMAT_KEY, value.strip() or DEFAULT_TIME_FORMAT)
 
 
 def runtime_value(model_name: str, var: str) -> str:

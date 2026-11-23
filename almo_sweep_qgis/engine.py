@@ -17,10 +17,12 @@ INSTALL_HINT = (
 try:
     from almo_sweep.contracts import build_sweep, load_manifest
     from almo_sweep.run import (
+        RunIndex,
         SweepRun,
         default_index,
         default_max_workers,
         resolve_runspec,
+        run_entry,
         run_one,
         run_sweep,
     )
@@ -36,3 +38,4 @@ except Exception as exc:  # engine not installed in this interpreter
 
     load_manifest = build_sweep = resolve_runspec = run_one = _unavailable
     run_sweep = default_index = default_max_workers = SweepRun = _unavailable
+    RunIndex = run_entry = _unavailable
