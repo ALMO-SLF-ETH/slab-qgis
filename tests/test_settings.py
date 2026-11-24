@@ -70,3 +70,45 @@ def test_dialog_builds_prefilled_fields(qgis_app: QgsApplication, manifest) -> N
     pickers = dlg.findChildren(QgsFileWidget)
     assert len(pickers) == 2  # one file, one directory
     assert any(p.filePath() == "/opt/toy/bin" for p in pickers)
+
+
+@pytest.fixture
+def packaged_manifest(tmp_path):
+    from slab_sweep.contracts import load_manifest
+
+    toml = tmp_path / "model.toml"
+    toml.write_text(
+        """
+[model]
+name = "toy_packaged"
+version = "0"
+schema = "1.2"
+[invocation]
+command = ["x"]
+[runtime.TOY_BIN]
+kind = "file"
+default = "{model_dir}/bin/toy{exe}"
+""",
+        encoding="utf-8",
+    )
+    return load_manifest(toml)
+
+
+def test_default_satisfies_required(qgis_app: QgsApplication, packaged_manifest) -> None:
+    settings.set_runtime_value("toy_packaged", "TOY_BIN", "")
+    assert settings.missing_required(packaged_manifest) == []
+    default = settings.runtime_defaults(packaged_manifest)["TOY_BIN"]
+    assert default.startswith(packaged_manifest.model_dir.as_posix())
+    # the default is not stored: the engine applies it, so a moved package still works
+    assert settings.runtime_env(packaged_manifest) == {}
+
+
+def test_dialog_shows_default_as_placeholder(qgis_app: QgsApplication, packaged_manifest) -> None:
+    settings.set_runtime_value("toy_packaged", "TOY_BIN", "")
+    dlg = RuntimeSettingsDialog(packaged_manifest)
+    (picker,) = dlg.findChildren(QgsFileWidget)
+    assert picker.filePath() == ""
+    assert (
+        picker.lineEdit().placeholderText()
+        == settings.runtime_defaults(packaged_manifest)["TOY_BIN"]
+    )

@@ -29,9 +29,13 @@ class RuntimeSettingsDialog(QDialog):
         root = QVBoxLayout(self)
         form = QFormLayout()
         self._widgets: dict[str, QWidget] = {}
+        defaults = settings.runtime_defaults(manifest)
         for var, spec in manifest.runtime.items():
             widget = _make_widget(str(spec.kind))
             _set_value(widget, settings.runtime_value(manifest.name, var))
+            if defaults.get(var):
+                # Shown greyed out while the field is empty: what the run uses if left unset.
+                _set_placeholder(widget, defaults[var])
             widget.setToolTip(spec.description or "")
             label = QLabel(var if spec.required else f"{var} (optional)")
             label.setToolTip(spec.description or "")
@@ -69,6 +73,13 @@ def _set_value(widget: QWidget, value: str) -> None:
         widget.setFilePath(value)
     elif isinstance(widget, QLineEdit):
         widget.setText(value)
+
+
+def _set_placeholder(widget: QWidget, text: str) -> None:
+    if isinstance(widget, QgsFileWidget):
+        widget.lineEdit().setPlaceholderText(text)
+    elif isinstance(widget, QLineEdit):
+        widget.setPlaceholderText(text)
 
 
 def _value(widget: QWidget) -> str:

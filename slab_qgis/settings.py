@@ -132,10 +132,20 @@ def runtime_env(manifest: Any) -> dict[str, str]:
     return env
 
 
+def runtime_defaults(manifest: Any) -> dict[str, str]:
+    """The manifest's resolved runtime defaults (e.g. a binary shipped in the model package).
+
+    Empty for an engine that predates runtime defaults (manifest schema < 1.2).
+    """
+    resolve = getattr(manifest, "runtime_defaults", None)
+    return dict(resolve()) if callable(resolve) else {}
+
+
 def missing_required(manifest: Any) -> list[str]:
-    """Names of required runtime settings that have no stored value yet."""
+    """Names of required runtime settings with neither a stored value nor a manifest default."""
+    defaults = runtime_defaults(manifest)
     return [
         var
         for var, spec in getattr(manifest, "runtime", {}).items()
-        if spec.required and not runtime_value(manifest.name, var)
+        if spec.required and not runtime_value(manifest.name, var) and not defaults.get(var)
     ]
