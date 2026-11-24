@@ -78,7 +78,7 @@ def fetch_dem(
         )
     report(0.10, f"{len(tiles)} tile(s) found; preparing mosaic…")
 
-    vrt_path = "/vsimem/almo_dem_mosaic.vrt"
+    vrt_path = "/vsimem/slab_qgis_dem_mosaic.vrt"
     sources = ["/vsicurl/" + t.url for t in tiles]
     vrt = gdal.BuildVRT(vrt_path, sources)
     if vrt is None:
@@ -168,7 +168,7 @@ def _write_cutline(polygon_wkt: str, src_epsg: int, ogr, osr) -> str:
 
     GDAL reprojects the cutline to the warp's CRS itself, as long as the layer carries an SRS.
     """
-    path = "/vsimem/almo_dem_cutline.geojson"
+    path = "/vsimem/slab_qgis_dem_cutline.geojson"
     drv = ogr.GetDriverByName("GeoJSON")
     ds = drv.CreateDataSource(path)
     layer = ds.CreateLayer("cutline", _srs(src_epsg, osr), ogr.wkbPolygon)
