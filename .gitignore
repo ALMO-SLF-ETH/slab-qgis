@@ -11,3 +11,7 @@ tests/output/
 
 # QGIS writes a style database next to the project it opens
 symbology-style.db
+
+# Plugin build output (scripts/build_plugin.py)
+dist/
+slab_qgis/_vendor/

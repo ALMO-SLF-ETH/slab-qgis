@@ -325,6 +325,23 @@ pre-commit run --all-files
 Type-checking runs under QGIS's Python (`qgis` ships only partial stubs), so it is not wired
 into pre-commit; the engine core, by contrast, is fully `mypy --strict`.
 
+### Build the plugin zip
+
+The installable zip bundles the slab-sweep engine pinned in [`engine.toml`](engine.toml) under
+`slab_qgis/_vendor/`, so users need not install the engine themselves. An importable slab-sweep
+(such as the editable install above) takes precedence over the bundled copy; the plugin uses the
+bundled one only when there is none.
+
+```bash
+python scripts/build_plugin.py                         # engine pinned in engine.toml
+python scripts/build_plugin.py --engine-wheel <wheel>  # or a local slab-sweep wheel
+<qgis-python> scripts/smoke_zip.py dist/slab_qgis-<version>.zip
+```
+
+The build script checks the zip (one `slab_qgis/` folder with `metadata.txt`, `LICENSE`, the engine
+and its licence, no bytecode). The smoke test loads the bundled engine in QGIS's Python and runs a
+model with it; run it where slab-sweep is not installed. CI does both on every push.
+
 ## License
 
 Copyright © 2026 ALMO. This plugin is free software, licensed under the **GNU General Public

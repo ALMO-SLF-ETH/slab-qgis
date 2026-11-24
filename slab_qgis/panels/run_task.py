@@ -52,7 +52,7 @@ class SweepTask(QgsTask):
         self._lock = threading.Lock()
 
     def run(self) -> bool:
-        env = dict(os.environ)
+        env = engine.model_env(dict(os.environ))
         env.update(settings.runtime_env(self._manifest))
         try:
             report = engine.run_sweep(
@@ -94,7 +94,7 @@ class RunTask(QgsTask):
     def run(self) -> bool:
         # Supply the model's configured runtime settings (e.g. SLAB_PRO_BIN) as env vars, so no
         # shell environment is needed when QGIS is launched normally.
-        env = dict(os.environ)
+        env = engine.model_env(dict(os.environ))
         env.update(settings.runtime_env(self._manifest))
         try:
             self.result = engine.run_one(
