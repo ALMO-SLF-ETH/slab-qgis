@@ -137,6 +137,13 @@ each model remembers its own runtime settings (below), so a model you've used be
 to run with its binary/DLL paths already set. The status line confirms the model, its inputs
 and parameters.
 
+**Get models…** opens the list of published models. **Install** downloads the package of the
+latest release for your platform into your QGIS profile (`<profile>/slab_qgis/models/`) and adds
+it to the model list; a package that ships its binary is ready to run without further settings.
+**Update** replaces an installed version with a newer release, and **Remove** deletes it. Once a
+day the plugin checks for newer releases of installed models and shows a notice in QGIS's message
+bar (turn this off in the same dialog). The plugin itself is updated by QGIS's plugin manager.
+
 ### 7. Configure the model's runtime settings (once per machine)
 
 Click **Model settings…** (next to the model selector) and fill in the paths the model needs.

@@ -37,6 +37,10 @@ if _ENGINE_SRC.is_dir():
 def qgis_app() -> Iterator[QgsApplication]:
     """Start a headless QGIS application once for the whole test session."""
     app = start_app()
+    # The plugin checks GitHub for model updates on load; tests must not touch the network.
+    from slab_qgis.catalog import service
+
+    service.set_updates_enabled(False)
     yield app
 
 

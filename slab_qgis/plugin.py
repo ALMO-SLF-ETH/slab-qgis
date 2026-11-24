@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
+from qgis.core import Qgis
 from qgis.gui import QgisInterface
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtWidgets import QAction, QPushButton
 
 from slab_qgis.panels.main_panel import MainPanel
 
@@ -37,6 +39,33 @@ class SlabQgisPlugin:
 
         self.iface.addToolBarIcon(self._action)
         self.iface.addPluginToMenu(PLUGIN_NAME, self._action)
+        self._check_for_updates()
+
+    def _check_for_updates(self) -> None:
+        """At most once a day, look for newer releases of installed models (in the background)."""
+        from slab_qgis.catalog import net, service
+        from slab_qgis.panels.models_dialog import task_runner
+
+        if not service.check_due():
+            return
+
+        def done(updates: Any, error: Exception | None) -> None:
+            if error is None and updates and self._panel is not None:
+                self._notify(updates)
+
+        task_runner(
+            "Checking for Slab-QGIS model updates", lambda: service.check_updates(net.fetch), done
+        )
+
+    def _notify(self, updates: list[Any]) -> None:
+        text = ", ".join(f"{u.name} {u.current} → {u.latest}" for u in updates)
+        bar = self.iface.messageBar()
+        item = bar.createMessage(PLUGIN_NAME, f"Updates available: {text}")
+        if any(u.kind == "model" for u in updates) and self._panel is not None:
+            button = QPushButton("Open models…")
+            button.clicked.connect(self._panel.open_models_dialog)
+            item.layout().addWidget(button)
+        bar.pushWidget(item, Qgis.MessageLevel.Info, 0)
 
     def unload(self) -> None:
         """Remove everything this plugin added. Called by QGIS when the plugin unloads."""

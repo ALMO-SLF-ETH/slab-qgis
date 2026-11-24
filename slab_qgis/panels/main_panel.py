@@ -11,8 +11,9 @@ The tabs read left to right in workflow order:
 4. **Results**        -- browse and inspect the runs produced, and build weighted hazard maps.
 
 The model is chosen at the top from a **persistent list** of registered models (stored in
-:class:`QgsSettings`, so it survives restarts); "Add…" registers a new one from its manifest
-and "Remove" drops it. Each model's runtime settings (e.g. ``SLAB_PRO_BIN``/``SLAB_PRO_DLL_DIR``)
+:class:`QgsSettings`, so it survives restarts); "Get models…" downloads and installs a published
+model (see :mod:`slab_qgis.panels.models_dialog`), "Add…" registers one from its manifest and
+"Remove" drops it. Each model's runtime settings (e.g. ``SLAB_PRO_BIN``/``SLAB_PRO_DLL_DIR``)
 are already persisted per model, so a re-selected model keeps its configured paths. Every page
 reads the active model (and the user's selections) from a shared
 :class:`~slab_qgis.state.StudyState`.
@@ -87,6 +88,12 @@ class MainPanel(QgsDockWidget):
         self._model_combo.currentIndexChanged.connect(self._on_model_selected)
         row.addWidget(self._model_combo, 1)
 
+        get_button = QToolButton()
+        get_button.setText("Get models…")
+        get_button.setToolTip("Download, update or remove published models")
+        get_button.clicked.connect(self.open_models_dialog)
+        row.addWidget(get_button, 0)
+
         add_button = QToolButton()
         add_button.setText("Add…")
         add_button.setToolTip("Register a new model from its manifest (model.toml)")
@@ -117,7 +124,7 @@ class MainPanel(QgsDockWidget):
     def _default_status(self) -> str:
         if not engine.AVAILABLE:
             return f"Engine not installed. {engine.INSTALL_HINT}"
-        return "No model selected. Use 'Add…' to register one."
+        return "No model selected. Use 'Get models…' to install one, or 'Add…' to register one."
 
     def _label_for_path(self, path: str) -> str:
         """A human label for a registered model: 'name version', or the filename if it won't
@@ -199,6 +206,15 @@ class MainPanel(QgsDockWidget):
         if path:
             settings.remove_model(path)
             self._refresh_models(select=settings.last_model())
+
+    def open_models_dialog(self) -> None:
+        from slab_qgis.panels.models_dialog import ModelsDialog
+
+        dialog = ModelsDialog(self)
+        dialog.installed_callback = lambda path: self._refresh_models(
+            select=path or settings.last_model()
+        )
+        dialog.exec()
 
     def _open_settings(self) -> None:
         manifest = self.state.manifest
