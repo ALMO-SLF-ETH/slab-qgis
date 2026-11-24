@@ -324,3 +324,8 @@ pre-commit run --all-files
 
 Type-checking runs under QGIS's Python (`qgis` ships only partial stubs), so it is not wired
 into pre-commit; the engine core, by contrast, is fully `mypy --strict`.
+
+## License
+
+Copyright © 2026 ALMO. This plugin is free software, licensed under the **GNU General Public
+License v3.0** (GPL-3.0-only) — see [LICENSE](LICENSE).
