@@ -421,8 +421,11 @@ def _grid_sweep_state(manifest: Any) -> StudyState:
 
 
 def test_build_sweep_jobs_numbers_runs_and_writes_study_json(
-    qgis_app: QgsApplication, tmp_path: Path
+    qgis_app: QgsApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The Parallel-runs box is capped at the machine's processor count; fix it so the test does
+    # not depend on the runner (CI machines have 2).
+    monkeypatch.setattr(engine, "default_max_workers", lambda: 8)
     manifest = _sweepable_manifest()
     page = RunPage(_grid_sweep_state(manifest))
     page._name_edit.setText("myproj")
