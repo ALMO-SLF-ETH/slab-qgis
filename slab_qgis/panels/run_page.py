@@ -1354,13 +1354,14 @@ def _sha256(path: str) -> str:
 def _layer_local_path(layer: Any) -> str | None:
     """The existing absolute file backing ``layer``, or None if it is not saved locally.
 
-    Only plain GDAL/OGR file sources count. Memory/temporary layers, remote providers (WMS/WFS/
-    vsicurl, …) and relative/bare paths (e.g. a project-embedded ``dem.tif`` with no directory)
-    all return None, so the caller knows to save them to a real file before running.
+    Only plain GDAL/OGR file sources count. Memory layers, remote providers (WMS/WFS/vsicurl, …)
+    and relative/bare paths (e.g. a project-embedded ``dem.tif`` with no directory) all return
+    None, so the caller knows to save them to a real file before running.
+
+    ``QgsMapLayer.isTemporary()`` is deliberately not consulted: it also flags ordinary files that
+    happen to live in the system temp folder (on Linux, any ``/tmp/...`` path), which are real
+    files to copy into the project like any other.
     """
-    with contextlib.suppress(Exception):
-        if layer.isTemporary():
-            return None
     if layer.providerType() not in ("gdal", "ogr"):
         return None
     # OGR appends "|layername=…"/"|layerid=…"; the file is the part before the first '|'.

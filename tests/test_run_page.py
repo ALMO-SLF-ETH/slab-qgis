@@ -847,3 +847,20 @@ def test_frame_series_loads_two_turbo_temporal_groups(
     assert band1 and all(abs(lyr.renderer().classificationMax() - 2.0) < 1e-6 for lyr in band1)
     assert band2 and all(abs(lyr.renderer().classificationMin() - 0.0) < 1e-6 for lyr in band2)
     assert band2 and all(abs(lyr.renderer().classificationMax() - 20.0) < 1e-6 for lyr in band2)
+
+
+def test_layer_in_the_system_temp_folder_counts_as_a_local_file(qgis_app: QgsApplication) -> None:
+    # QGIS flags any layer under the system temp folder as "temporary" (on Linux: every /tmp
+    # path). Such a layer is still a real file on disk and must be copied like any other.
+    pytest.importorskip("osgeo")
+    import tempfile
+
+    from qgis.core import QgsRasterLayer
+    from slab_qgis.panels.run_page import _layer_local_path
+
+    folder = tempfile.mkdtemp().replace("\\", "/")  # the form QGIS compares against
+    src = f"{folder}/dem.tif"
+    _write_raster(src, [1.0])
+    layer = QgsRasterLayer(src, "dem")
+    assert layer.isValid()
+    assert _layer_local_path(layer) == src

@@ -32,7 +32,7 @@ def _get(url: str) -> bytes:
     token = os.environ.get("GITHUB_TOKEN")
     if token and url.startswith("https://api.github.com/"):
         request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - fixed https URLs
+    with urllib.request.urlopen(request, timeout=60) as response:
         data: bytes = response.read()
     return data
 

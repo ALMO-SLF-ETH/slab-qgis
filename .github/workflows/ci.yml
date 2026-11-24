@@ -54,8 +54,10 @@ jobs:
           python3 -c "from qgis.core import Qgis; print('QGIS', Qgis.version())"
           python3 -c "from qgis.PyQt.QtCore import QT_VERSION_STR; print('Qt', QT_VERSION_STR)"
           python3 --version
-      - name: Install pytest into QGIS's Python
-        run: pip install pytest --break-system-packages || pip install pytest
+      - name: Install pytest and scipy into QGIS's Python
+        # scipy (release-zone rounding and tapering) ships with QGIS on Windows and macOS but not
+        # in the qgis/qgis images.
+        run: pip install pytest scipy --break-system-packages || pip install pytest scipy
       - name: Run tests (headless)
         working-directory: slab-qgis
         env:

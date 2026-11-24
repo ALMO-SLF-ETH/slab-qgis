@@ -65,6 +65,7 @@ def test_flat_slab_fills_polygon_and_zeros_outside(tmp_path: Path) -> None:
 
 def test_taper_feathers_depth_to_the_border(tmp_path: Path) -> None:
     pytest.importorskip("osgeo")
+    pytest.importorskip("scipy")  # corner rounding and tapering use scipy.ndimage
     out = str(tmp_path / "taper.tif")
     poly = _square_wkt(0.0, 0.0, 60.0, 60.0)
 
@@ -84,6 +85,7 @@ def test_taper_feathers_depth_to_the_border(tmp_path: Path) -> None:
 
 def test_corner_rounding_removes_the_sharp_corner(tmp_path: Path) -> None:
     pytest.importorskip("osgeo")
+    pytest.importorskip("scipy")  # corner rounding and tapering use scipy.ndimage
     out_sharp = str(tmp_path / "sharp.tif")
     out_round = str(tmp_path / "round.tif")
     poly = _square_wkt(0.0, 0.0, 50.0, 50.0)
@@ -129,6 +131,7 @@ def test_invalid_inputs_raise() -> None:
 
 def test_corner_radius_larger_than_polygon_is_reported(tmp_path: Path) -> None:
     pytest.importorskip("osgeo")
+    pytest.importorskip("scipy")  # corner rounding and tapering use scipy.ndimage
     out = str(tmp_path / "gone.tif")
     poly = _square_wkt(0.0, 0.0, 10.0, 10.0)  # 10 m square
     with pytest.raises(ReleaseRasterError, match="removed all material"):
