@@ -9,13 +9,13 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
-from almo_sweep_qgis.panels.main_panel import MainPanel
+from slab_qgis.panels.main_panel import MainPanel
 
-PLUGIN_NAME = "ALMO Sweep"
+PLUGIN_NAME = "Slab-QGIS"
 _ICON_PATH = os.path.join(os.path.dirname(__file__), "resources", "icon.svg")
 
 
-class AlmoSweepPlugin:
+class SlabQgisPlugin:
     """Owns the toolbar action and the dock widget, and cleans both up on unload."""
 
     def __init__(self, iface: QgisInterface) -> None:
@@ -31,7 +31,7 @@ class AlmoSweepPlugin:
 
         self._action = QAction(QIcon(_ICON_PATH), PLUGIN_NAME, self.iface.mainWindow())
         self._action.setCheckable(True)
-        self._action.setToolTip("Show or hide the ALMO Sweep panel")
+        self._action.setToolTip("Show or hide the Slab-QGIS panel")
         self._action.toggled.connect(self._panel.setVisible)
         self._panel.visibilityChanged.connect(self._action.setChecked)
 

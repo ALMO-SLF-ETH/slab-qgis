@@ -117,7 +117,7 @@ def build_plan(manifest: Any, sweep: dict[str, Any], base_params: dict[str, Any]
     chosen scheme becomes the engine selection strategy. Raises :class:`SweepPlanError` with a
     human message on any inconsistency (bad range, out-of-bounds, non-sweepable parameter, ...).
     """
-    from almo_sweep.contracts import (
+    from slab_sweep.contracts import (
         GridSelection,
         LatinHypercubeSelection,
         MonteCarloSelection,
@@ -125,9 +125,9 @@ def build_plan(manifest: Any, sweep: dict[str, Any], base_params: dict[str, Any]
         Uniform,
         build_sweep,
     )
-    from almo_sweep.contracts.distributions import DistributionError
-    from almo_sweep.contracts.selection import SelectionError
-    from almo_sweep.contracts.sweep import SweepError
+    from slab_sweep.contracts.distributions import DistributionError
+    from slab_sweep.contracts.selection import SelectionError
+    from slab_sweep.contracts.sweep import SweepError
 
     varied = varied_params(sweep)
     try:

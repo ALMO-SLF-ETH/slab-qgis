@@ -2,7 +2,7 @@
 
 A :class:`DemProvider` is the single extension point for a new source of DEM data. It declares its
 native CRS and the resolutions it offers, and returns the download URLs of the tiles that cover a
-WGS84 bounding box. The merge step (:mod:`almo_sweep_qgis.dem.fetch`) is provider-agnostic and works
+WGS84 bounding box. The merge step (:mod:`slab_qgis.dem.fetch`) is provider-agnostic and works
 off that list, so supporting another provider is just another subclass plus a ``register()`` call.
 
 Only the standard library is used here, so providers can be unit-tested without GDAL or QGIS.
@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 #: Identifies this client to the data portals (some reject requests without a User-Agent).
-_USER_AGENT = "almo-sweep-dem/0.1"
+_USER_AGENT = "slab-qgis-dem/0.1"
 
 
 @dataclass(frozen=True)

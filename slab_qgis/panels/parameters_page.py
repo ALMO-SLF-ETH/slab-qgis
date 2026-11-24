@@ -54,15 +54,15 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import estimate, sweep_plan
-from almo_sweep_qgis.dem.resample import (
+from slab_qgis import estimate, sweep_plan
+from slab_qgis.dem.resample import (
     RESAMPLE_METHODS,
     default_resampled_path,
     raster_resolution,
 )
-from almo_sweep_qgis.dem.style import apply_hillshade
-from almo_sweep_qgis.panels.run_pipeline import ResampleTask
-from almo_sweep_qgis.state import StudyState
+from slab_qgis.dem.style import apply_hillshade
+from slab_qgis.panels.run_pipeline import ResampleTask
+from slab_qgis.state import StudyState
 
 # Fallback bounds when the manifest leaves a numeric parameter unbounded.
 _FLOAT_LIMIT = 1.0e12
@@ -975,7 +975,7 @@ class _SweepEditor(QWidget):
     """Range + distribution editor for one swept numeric parameter (Uniform or Normal).
 
     Emits :attr:`changed` on any edit. :meth:`entry` returns the plain-data config consumed by
-    :mod:`~almo_sweep_qgis.sweep_plan` (``{"dist": "uniform", "low", "high"}`` or
+    :mod:`~slab_qgis.sweep_plan` (``{"dist": "uniform", "low", "high"}`` or
     ``{"dist": "normal", "mean", "std", "min", "max"}``, plus a grid ``steps`` override)."""
 
     changed = pyqtSignal()

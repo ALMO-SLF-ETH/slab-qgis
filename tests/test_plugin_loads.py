@@ -9,13 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis import classFactory, settings
-from almo_sweep_qgis.panels.main_panel import PAGE_TITLES, MainPanel
-from almo_sweep_qgis.plugin import AlmoSweepPlugin
 from qgis.core import QgsApplication
 from qgis.gui import QgisInterface
 from qgis.PyQt.QtWidgets import QTabWidget
 from qgis.testing.mocked import get_iface
+from slab_qgis import classFactory, settings
+from slab_qgis.panels.main_panel import PAGE_TITLES, MainPanel
+from slab_qgis.plugin import SlabQgisPlugin
 
 # Every QgisInterface method the plugin calls. Verified against the *real* class, because the
 # mocked iface would accept anything and hide a typo or an API change.
@@ -36,7 +36,7 @@ def test_real_qgisinterface_exposes_methods_we_call() -> None:
 
 
 def test_classfactory_returns_plugin(qgis_app: QgsApplication) -> None:
-    assert isinstance(classFactory(get_iface()), AlmoSweepPlugin)
+    assert isinstance(classFactory(get_iface()), SlabQgisPlugin)
 
 
 def test_initgui_registers_and_unload_cleans_up(qgis_app: QgsApplication) -> None:
@@ -62,13 +62,21 @@ def test_main_panel_builds_all_pages(qgis_app: QgsApplication) -> None:
     assert [tabs.tabText(i) for i in range(tabs.count())] == list(PAGE_TITLES)
 
 
-def _dampm_model_toml() -> Path:
-    return Path(__file__).resolve().parents[2] / "dampm" / "interface" / "model.toml"
+def _slab_pro_model_toml() -> Path:
+    # Slab-Pro's generated manifest in a sibling checkout (Slab-Pro-dev or Slab-Pro), if any.
+    root = Path(__file__).resolve().parents[2]  # tests/ -> slab-qgis -> Simulations
+    for repo in ("Slab-Pro-dev", "Slab-Pro"):
+        path = root / repo / "interface" / "model.toml"
+        if path.exists():
+            return path
+    return root / "Slab-Pro" / "interface" / "model.toml"
 
 
-@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+@pytest.mark.skipif(
+    not _slab_pro_model_toml().exists(), reason="no Slab-Pro checkout with interface/model.toml"
+)
 def test_registered_model_populates_combo_and_loads_on_startup(qgis_app: QgsApplication) -> None:
-    model = str(_dampm_model_toml())
+    model = str(_slab_pro_model_toml())
     for p in settings.registered_models():  # start clean
         settings.remove_model(p)
     settings.add_model(model)
@@ -79,7 +87,7 @@ def test_registered_model_populates_combo_and_loads_on_startup(qgis_app: QgsAppl
     assert combo.currentData() == model
     # the registered model is loaded into state without any manual browsing
     assert panel.state.manifest is not None
-    assert panel.state.manifest.name == "dampm"
+    assert panel.state.manifest.name == "slab-pro"
     # and it is remembered as the last model for next launch
     assert settings.last_model() == model
 

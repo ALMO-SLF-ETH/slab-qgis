@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis import engine, sweep_plan
+from slab_qgis import engine, sweep_plan
 
 
 @pytest.fixture
-def manifest(dampm_manifest_path: Path):
+def manifest(slab_pro_manifest_path: Path):
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    return engine.load_manifest(str(dampm_manifest_path))
+    return engine.load_manifest(str(slab_pro_manifest_path))
 
 
 # --- pure helpers (no engine) ---------------------------------------------------------

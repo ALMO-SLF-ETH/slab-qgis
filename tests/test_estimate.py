@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis import estimate
+from slab_qgis import estimate
 
 
 def test_rectangle_area_and_volume() -> None:

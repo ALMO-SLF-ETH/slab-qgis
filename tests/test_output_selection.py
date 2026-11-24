@@ -5,16 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.run_page import RunPage
-from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
+from slab_qgis import engine
+from slab_qgis.panels.run_page import RunPage
+from slab_qgis.state import StudyState
 
 
 @pytest.fixture
-def manifest(dampm_manifest_path: Path):
+def manifest(slab_pro_manifest_path: Path):
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    return engine.load_manifest(str(dampm_manifest_path))
+    return engine.load_manifest(str(slab_pro_manifest_path))
 
 
 def test_outputs_group_reflects_manifest(qgis_app: QgsApplication, manifest) -> None:

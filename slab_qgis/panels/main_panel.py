@@ -12,10 +12,10 @@ The tabs read left to right in workflow order:
 
 The model is chosen at the top from a **persistent list** of registered models (stored in
 :class:`QgsSettings`, so it survives restarts); "Add…" registers a new one from its manifest
-and "Remove" drops it. Each model's runtime settings (e.g. ``DAMPM_BIN``/``DAMPM_DLL_DIR``)
+and "Remove" drops it. Each model's runtime settings (e.g. ``SLAB_PRO_BIN``/``SLAB_PRO_DLL_DIR``)
 are already persisted per model, so a re-selected model keeps its configured paths. Every page
 reads the active model (and the user's selections) from a shared
-:class:`~almo_sweep_qgis.state.StudyState`.
+:class:`~slab_qgis.state.StudyState`.
 """
 
 from __future__ import annotations
@@ -36,13 +36,13 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import engine, settings
-from almo_sweep_qgis.panels.parameters_page import ParametersPage
-from almo_sweep_qgis.panels.preprocessing_page import PreprocessingPage
-from almo_sweep_qgis.panels.results_page import ResultsPage
-from almo_sweep_qgis.panels.run_page import RunPage
-from almo_sweep_qgis.panels.settings_dialog import RuntimeSettingsDialog
-from almo_sweep_qgis.state import StudyState
+from slab_qgis import engine, settings
+from slab_qgis.panels.parameters_page import ParametersPage
+from slab_qgis.panels.preprocessing_page import PreprocessingPage
+from slab_qgis.panels.results_page import ResultsPage
+from slab_qgis.panels.run_page import RunPage
+from slab_qgis.panels.settings_dialog import RuntimeSettingsDialog
+from slab_qgis.state import StudyState
 
 #: Tab titles, left to right in workflow order: prepare data, then set up, run and inspect a study.
 PAGE_TITLES = ("Pre-processing", "Parameters", "Run", "Results")
@@ -52,9 +52,9 @@ class MainPanel(QgsDockWidget):
     """A dock widget: model selector on top, one tab per workflow section below."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("ALMO Sweep", parent)
+        super().__init__("Slab-QGIS", parent)
         # A stable object name lets QGIS save and restore the dock's geometry/state.
-        self.setObjectName("AlmoSweepPanel")
+        self.setObjectName("SlabQgisPanel")
         self.state = StudyState(self)
 
         container = QWidget(self)

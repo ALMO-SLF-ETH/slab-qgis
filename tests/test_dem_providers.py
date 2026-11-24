@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from almo_sweep_qgis.dem import providers
+from slab_qgis.dem import providers
 
 
 def _page(tile_id: str, next_url: str | None) -> dict:

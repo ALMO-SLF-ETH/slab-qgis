@@ -7,13 +7,13 @@
   </defs>
   <rect width="1280" height="720" fill="#ffffff"/>
 
-  <text x="36" y="46" font-size="27" class="h" fill="#0f172a">ALMO stack — how the GUI, the engine and dampm fit together</text>
+  <text x="36" y="46" font-size="27" class="h" fill="#0f172a">How slab-qgis, slab-sweep and Slab-Pro fit together</text>
   <text x="36" y="72" font-size="14" class="mut">Three decoupled repos joined by a small file contract — the engine runs any model that ships a manifest + an executable</text>
 
   <!-- ===== LEFT: three layers ===== -->
   <!-- GUI -->
   <rect x="48" y="100" width="760" height="118" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
-  <text x="70" y="132" font-size="18" class="h" fill="#1e40af">QGIS_Simulation_GUI — the plugin  (Qt 6 / PyQGIS)</text>
+  <text x="70" y="132" font-size="18" class="h" fill="#1e40af">slab-qgis — the plugin  (Qt 6 / PyQGIS)</text>
   <rect x="668" y="112" width="120" height="22" rx="11" fill="#2563eb"/>
   <text x="728" y="128" font-size="11" class="h" fill="#ffffff" text-anchor="middle">imports qgis</text>
   <text x="70" y="160" font-size="13.5" fill="#1e293b">main_panel · parameters_page · run_page — a manifest-driven UI (inputs · params · visible_when)</text>
@@ -22,25 +22,25 @@
 
   <!-- engine -->
   <rect x="48" y="286" width="760" height="118" rx="12" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
-  <text x="70" y="318" font-size="18" class="h" fill="#5b21b6">almo-sweep — the engine  (pure Python: stdlib + numpy)</text>
+  <text x="70" y="318" font-size="18" class="h" fill="#5b21b6">slab-sweep — the engine  (pure Python: stdlib + numpy)</text>
   <rect x="648" y="298" width="140" height="22" rx="11" fill="#7c3aed"/>
   <text x="718" y="314" font-size="11" class="h" fill="#ffffff" text-anchor="middle">model-agnostic</text>
   <text x="70" y="346" font-size="13.5" fill="#1e293b">contracts: ModelManifest · RunSpec · RunResult · the process contract</text>
   <text x="70" y="368" font-size="13.5" fill="#1e293b">resolve_runspec() → a validated RunSpec   ·   run_one() → spawn model · stream progress · timeout · read result</text>
-  <text x="70" y="390" font-size="12.5" class="mut">knows nothing about dampm or QGIS</text>
+  <text x="70" y="390" font-size="12.5" class="mut">knows nothing about Slab-Pro or QGIS</text>
 
-  <!-- dampm -->
+  <!-- Slab-Pro -->
   <rect x="48" y="472" width="760" height="190" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
-  <text x="70" y="504" font-size="18" class="h" fill="#c2410c">dampm — the model  (C++ core + Python adapter)</text>
+  <text x="70" y="504" font-size="18" class="h" fill="#c2410c">Slab-Pro — the model  (C++ core + Python adapter)</text>
   <rect x="610" y="486" width="178" height="22" rx="11" fill="#ea580c"/>
-  <text x="699" y="502" font-size="11" class="h" fill="#ffffff" text-anchor="middle">no ALMO/QGIS code in C++</text>
+  <text x="699" y="502" font-size="11" class="h" fill="#ffffff" text-anchor="middle">no sweep/QGIS code in C++</text>
 
   <rect x="70" y="516" width="716" height="62" rx="8" fill="#ffffff" stroke="#fdba74"/>
-  <text x="86" y="540" font-size="13" fill="#7c2d12"><tspan class="h mono">dampm_interface</tspan> (Python, stdlib): <tspan class="mono">schema.py → model.toml</tspan> (manifest)</text>
+  <text x="86" y="540" font-size="13" fill="#7c2d12"><tspan class="h mono">slab_pro_interface</tspan> (Python, stdlib): <tspan class="mono">schema.py → model.toml</tspan> (manifest)</text>
   <text x="86" y="562" font-size="13" fill="#7c2d12">adapter: <tspan class="mono">runspec.json → simConfig.json → run the binary → result.json</tspan></text>
 
   <rect x="70" y="586" width="716" height="60" rx="8" fill="#ffffff" stroke="#fdba74"/>
-  <text x="86" y="612" font-size="13" fill="#7c2d12"><tspan class="h mono">dampm</tspan> (C++ / MPM): reads <tspan class="mono">simConfig.json</tspan> → simulates →</text>
+  <text x="86" y="612" font-size="13" fill="#7c2d12"><tspan class="h mono">Slab-Pro</tspan> (C++ / MPM): reads <tspan class="mono">simConfig.json</tspan> → simulates →</text>
   <text x="86" y="632" font-size="13" fill="#7c2d12">rasters &amp; particle <tspan class="mono">.ply</tspan>, <tspan class="mono">max_values.tif</tspan></text>
 
   <!-- connectors: GUI <-> engine -->
@@ -52,7 +52,7 @@
   <text x="382" y="256" font-size="12" class="mono" fill="#334155" text-anchor="middle">↑ RunResult</text>
   <text x="470" y="256" font-size="12.5" class="mut">the GUI calls the engine (in a QgsTask)</text>
 
-  <!-- connectors: engine <-> dampm -->
+  <!-- connectors: engine <-> Slab-Pro -->
   <line x1="300" y1="406" x2="300" y2="470" stroke="#475569" stroke-width="2.2" marker-end="url(#a)"/>
   <line x1="470" y1="470" x2="470" y2="406" stroke="#475569" stroke-width="2.2" marker-end="url(#a)"/>
   <rect x="214" y="426" width="172" height="24" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
@@ -61,7 +61,7 @@
   <text x="452" y="442" font-size="12" class="mono" fill="#334155" text-anchor="middle">↑ result.json</text>
   <text x="528" y="442" font-size="12.5" class="mut">the process contract: files + a subprocess</text>
 
-  <!-- manifest rail (built by dampm_interface, consumed by engine & GUI) -->
+  <!-- manifest rail (built by slab_pro_interface, consumed by engine & GUI) -->
   <path d="M830,545 L830,150" fill="none" stroke="#ea580c" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)"/>
   <text x="816" y="345" font-size="11.5" fill="#9a3412" class="mono" text-anchor="middle" transform="rotate(-90 816 345)">model.toml  →  engine &amp; GUI</text>
 
@@ -78,24 +78,24 @@
   <text x="890" y="290" font-size="13" class="mut"><tspan class="mono">runspec.json</tspan>, that writes a <tspan class="mono">result.json</tspan></text>
 
   <line x1="868" y1="312" x2="1222" y2="312" stroke="#e2e8f0" stroke-width="1.5"/>
-  <text x="868" y="340" font-size="13" fill="#1e293b">dampm supplies both via <tspan class="mono">dampm_interface</tspan>,</text>
-  <text x="868" y="359" font-size="13" fill="#1e293b">so the GUI &amp; engine carry no dampm code.</text>
+  <text x="868" y="340" font-size="13" fill="#1e293b">Slab-Pro supplies both via <tspan class="mono">slab_pro_interface</tspan>,</text>
+  <text x="868" y="359" font-size="13" fill="#1e293b">so the GUI &amp; engine carry no Slab-Pro code.</text>
 
   <line x1="868" y1="381" x2="1222" y2="381" stroke="#e2e8f0" stroke-width="1.5"/>
   <text x="868" y="409" font-size="13.5" class="h" fill="#1e293b">Boundaries kept clean:</text>
   <text x="868" y="435" font-size="13" fill="#1e293b">•  <tspan class="h" fill="#1e40af">GUI</tspan> — the only code that imports qgis</text>
   <text x="868" y="458" font-size="13" fill="#1e293b">•  <tspan class="h" fill="#5b21b6">engine</tspan> — no qgis, no model-specific code</text>
-  <text x="868" y="481" font-size="13" fill="#1e293b">•  <tspan class="h" fill="#c2410c">dampm C++</tspan> — no ALMO / QGIS code</text>
+  <text x="868" y="481" font-size="13" fill="#1e293b">•  <tspan class="h" fill="#c2410c">Slab-Pro C++</tspan> — no sweep / QGIS code</text>
 
   <rect x="868" y="505" width="354" height="48" rx="8" fill="#eef2ff" stroke="#6366f1"/>
   <text x="884" y="525" font-size="13" fill="#3730a3" class="h">Swap in another model</text>
   <text x="884" y="543" font-size="12.5" fill="#3730a3">ship a manifest + adapter — same GUI &amp; engine.</text>
 
   <text x="868" y="582" font-size="12.5" class="mut">Run flow:  GUI → resolve_runspec → run_one →</text>
-  <text x="868" y="600" font-size="12.5" class="mut">adapter → dampm.exe → result.json → GUI loads</text>
+  <text x="868" y="600" font-size="12.5" class="mut">adapter → slab-pro.exe → result.json → GUI loads</text>
   <text x="868" y="618" font-size="12.5" class="mut">the outputs as grouped, styled layers.</text>
 
   <!-- footer -->
   <rect x="48" y="674" width="1196" height="30" rx="8" fill="#ffffff"/>
-  <text x="60" y="694" font-size="13" class="mut">Three repos: <tspan class="mono" fill="#1e40af">QGIS_Simulation_GUI</tspan> · <tspan class="mono" fill="#5b21b6">almo-sweep</tspan> · <tspan class="mono" fill="#c2410c">dampm</tspan> (+ its <tspan class="mono">interface/</tspan>). The dividing lines are the file contract, not code dependencies.</text>
+  <text x="60" y="694" font-size="13" class="mut">Three repos: <tspan class="mono" fill="#1e40af">slab-qgis</tspan> · <tspan class="mono" fill="#5b21b6">slab-sweep</tspan> · <tspan class="mono" fill="#c2410c">Slab-Pro</tspan> (+ its <tspan class="mono">interface/</tspan>). The dividing lines are the file contract, not code dependencies.</text>
 </svg>

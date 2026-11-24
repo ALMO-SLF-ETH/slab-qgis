@@ -48,16 +48,16 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis.results.aggregate import (
+from slab_qgis.results.aggregate import (
     AggregateConfig,
     AggregateError,
     AggregateInput,
     AggregateResult,
     aggregate_max_values,
 )
-from almo_sweep_qgis.results.load_run import load_run_outputs
-from almo_sweep_qgis.results.study import StudySummary, load_study
-from almo_sweep_qgis.state import StudyState
+from slab_qgis.results.load_run import load_run_outputs
+from slab_qgis.results.study import StudySummary, load_study
+from slab_qgis.state import StudyState
 
 #: Friendly display name for each aggregate layer key (see results.aggregate.LAYER_FILENAMES).
 _LAYER_LABELS = {

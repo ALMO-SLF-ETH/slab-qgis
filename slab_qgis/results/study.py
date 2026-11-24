@@ -5,7 +5,7 @@ the swept parameters' distributions) and ``runs.json`` (the run index -- each ru
 parameters and weight, written as runs complete). This module reads both into a
 :class:`StudySummary` of plain data, plus the provenance of the code that produced the runs. It is
 deliberately free of GDAL/Qt so it is cheap to import and simple to test; the raster aggregation
-lives in :mod:`almo_sweep_qgis.results.aggregate`.
+lives in :mod:`slab_qgis.results.aggregate`.
 """
 
 from __future__ import annotations

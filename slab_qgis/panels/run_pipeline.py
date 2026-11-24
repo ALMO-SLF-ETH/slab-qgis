@@ -2,7 +2,7 @@
 
 A run may need to resample one or more rasters before the simulation(s) execute. Each step runs
 off the main thread as a :class:`QgsTask`; :class:`RunController` runs them in order, maps each
-step's progress into one overall :class:`~almo_sweep_qgis.progress.BatchProgress`, and runs each
+step's progress into one overall :class:`~slab_qgis.progress.BatchProgress`, and runs each
 step's main-thread finalisation between tasks. The design is batch-first: today the sequence is
 "resample… then one run", but a parameter sweep is simply more run steps -- the progress bar and
 ETA already describe the whole batch.
@@ -17,8 +17,8 @@ from typing import Any, Protocol, runtime_checkable
 from qgis.core import QgsApplication, QgsTask
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
-from almo_sweep_qgis.dem.resample import resample_raster
-from almo_sweep_qgis.progress import BatchProgress, format_progress
+from slab_qgis.dem.resample import resample_raster
+from slab_qgis.progress import BatchProgress, format_progress
 
 
 @runtime_checkable

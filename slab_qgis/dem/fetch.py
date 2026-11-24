@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from almo_sweep_qgis.dem.providers import DemFetchError, DemProvider
+from slab_qgis.dem.providers import DemFetchError, DemProvider
 
 #: Called with (fraction in [0,1], message) as the fetch/merge progresses.
 ProgressCb = Callable[[float, str], None]

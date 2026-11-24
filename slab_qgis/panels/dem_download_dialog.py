@@ -5,7 +5,7 @@ outlines the region of interest, and an output file; optionally the output can b
 different resolution with a chosen method. The covering tiles are mosaicked and clipped into one
 GeoTIFF (in a background task), which is then added to the project (rendered as a hillshade) ready
 to use as the DEM input. New providers appear here automatically once registered in
-:mod:`almo_sweep_qgis.dem.providers`.
+:mod:`slab_qgis.dem.providers`.
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis.dem import fetch, providers
-from almo_sweep_qgis.dem.resample import RESAMPLE_METHODS as _RESAMPLE_METHODS
-from almo_sweep_qgis.dem.style import apply_hillshade as _apply_hillshade
+from slab_qgis.dem import fetch, providers
+from slab_qgis.dem.resample import RESAMPLE_METHODS as _RESAMPLE_METHODS
+from slab_qgis.dem.style import apply_hillshade as _apply_hillshade
 
 
 class DemDownloadDialog(QDialog):

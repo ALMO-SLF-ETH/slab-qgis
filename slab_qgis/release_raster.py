@@ -1,4 +1,4 @@
-"""Turn a polygon layer into a release-depth raster for a dampm RASTER release.
+"""Turn a polygon layer into a release-depth raster for a Slab-Pro RASTER release.
 
 A release raster tells the model *where* material starts and *how deep* it is: every cell holds a
 release height in metres, and cells with no material are ``0``. This module builds one from a set
@@ -13,7 +13,7 @@ of polygons (the release zones) and a user-chosen depth:
   the released slab has feathered edges instead of a vertical wall.
 
 The result is a single-band Float32 GeoTIFF covering the polygons' extent (plus a small zero
-margin), in the polygons' CRS, with ``0`` wherever no material sits — ready to feed dampm as the
+margin), in the polygons' CRS, with ``0`` wherever no material sits — ready to feed Slab-Pro as the
 ``release_raster`` input (a RASTER release). ``osgeo``/``scipy`` are imported lazily so importing
 this module never requires them.
 
@@ -27,8 +27,8 @@ import math
 import os
 from dataclasses import dataclass
 
-#: dampm's nodata sentinel. The raster never actually contains it (no-material cells are 0, which
-#: dampm reads as "below any h_min, so no release"), but it is tagged for consistency with the rest.
+#: Slab-Pro's nodata sentinel. The raster never actually contains it (no-material cells are 0, which
+#: Slab-Pro reads as "below any h_min, so no release"), but it is tagged for consistency with the rest.
 NODATA = -9999.0
 
 

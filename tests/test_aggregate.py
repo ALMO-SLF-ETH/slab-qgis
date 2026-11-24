@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from almo_sweep_qgis.results.aggregate import (
+from slab_qgis.results.aggregate import (
     AggregateConfig,
     AggregateError,
     AggregateInput,

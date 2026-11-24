@@ -15,7 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import settings
+from slab_qgis import settings
 
 
 class RuntimeSettingsDialog(QDialog):

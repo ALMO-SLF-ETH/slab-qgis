@@ -1,6 +1,6 @@
 """Resample an existing raster (e.g. a DEM) to a different resolution with GDAL.
 
-The DEM-download path resamples while merging tiles (see :mod:`almo_sweep_qgis.dem.fetch`);
+The DEM-download path resamples while merging tiles (see :mod:`slab_qgis.dem.fetch`);
 this does the same for a raster already on disk, so a DEM loaded at its native resolution can be
 coarsened or refined to the grid a run needs. ``osgeo`` is imported lazily so importing this
 module never requires GDAL.

@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from almo_sweep_qgis import engine, run_naming
-from almo_sweep_qgis.panels.run_page import (
+from qgis.core import QgsApplication, QgsProject
+from qgis.PyQt.QtCore import QUrl
+from slab_qgis import engine, run_naming
+from slab_qgis.panels.run_page import (
     RunPage,
     _copy_dataset,
     _CopyInputsTask,
@@ -20,18 +22,16 @@ from almo_sweep_qgis.panels.run_page import (
     _same_file,
     _unique_dst,
 )
-from almo_sweep_qgis.panels.run_task import RunTask
-from almo_sweep_qgis.state import StudyState
-from qgis.core import QgsApplication, QgsProject
-from qgis.PyQt.QtCore import QUrl
+from slab_qgis.panels.run_task import RunTask
+from slab_qgis.state import StudyState
 
-_TOY = Path(__file__).resolve().parents[2] / "almo-sweep" / "tests" / "fixtures" / "toy_model.py"
+_TOY = Path(__file__).resolve().parents[2] / "slab-sweep" / "tests" / "fixtures" / "toy_model.py"
 
 
 @pytest.fixture
 def toy_manifest():
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    from almo_sweep.contracts import parse_manifest
+    from slab_sweep.contracts import parse_manifest
 
     return parse_manifest(
         {
@@ -62,7 +62,7 @@ def test_build_runspec_uses_project_and_run_folders(
 
 
 def test_missing_inputs_enforces_visible_conditional_input(qgis_app: QgsApplication) -> None:
-    from almo_sweep.contracts import parse_manifest
+    from slab_sweep.contracts import parse_manifest
 
     m = parse_manifest(
         {
@@ -124,8 +124,8 @@ def test_layer_local_path_detects_unsaved_layers(qgis_app: QgsApplication, tmp_p
 
 
 def test_inputs_being_edited_blocks_uncommitted_layer(qgis_app: QgsApplication) -> None:
-    from almo_sweep.contracts import parse_manifest
     from qgis.core import QgsVectorLayer
+    from slab_sweep.contracts import parse_manifest
 
     m = parse_manifest(
         {
@@ -218,7 +218,7 @@ def test_stop_cancels_running_task_and_kills_process(
     # with a "cancelled" result, rather than waiting out the model's long sleep.
     import time
 
-    from almo_sweep.contracts import RunSpec, parse_manifest
+    from slab_sweep.contracts import RunSpec, parse_manifest
 
     manifest = parse_manifest(
         {
@@ -253,10 +253,10 @@ def test_apply_pending_resamples_runs_armed_request(
 ) -> None:
     pytest.importorskip("osgeo")
     import numpy as np
-    from almo_sweep.contracts import parse_manifest
-    from almo_sweep_qgis.dem.resample import raster_resolution
     from osgeo import gdal
     from qgis.core import QgsRasterLayer
+    from slab_qgis.dem.resample import raster_resolution
+    from slab_sweep.contracts import parse_manifest
 
     manifest = parse_manifest(
         {
@@ -300,9 +300,9 @@ def test_apply_pending_resamples_skips_when_already_at_target(
 ) -> None:
     pytest.importorskip("osgeo")
     import numpy as np
-    from almo_sweep.contracts import parse_manifest
     from osgeo import gdal
     from qgis.core import QgsRasterLayer
+    from slab_sweep.contracts import parse_manifest
 
     manifest = parse_manifest(
         {
@@ -336,8 +336,8 @@ def test_load_results_adds_raster_layer(
 ) -> None:
     pytest.importorskip("osgeo")
     import numpy as np
-    from almo_sweep.contracts import RunResult
     from osgeo import gdal, osr
+    from slab_sweep.contracts import RunResult
 
     tif = str(tmp_path / "grid.tif")
     ds = gdal.GetDriverByName("GTiff").Create(tif, 4, 4, 1, gdal.GDT_Float32)
@@ -362,7 +362,7 @@ def test_load_results_unpacks_bands_into_one_group(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
     pytest.importorskip("osgeo")
-    from almo_sweep.contracts import RunResult
+    from slab_sweep.contracts import RunResult
 
     grid = str(tmp_path / "final_grid.tif")
     _write_raster(grid, [1.0, 2.0, 3.0])  # 3-band raster -> 3 single-band layers
@@ -382,7 +382,7 @@ def test_load_results_unpacks_bands_into_one_group(
 
 def _sweepable_manifest():
     """A toy manifest with one sweepable float parameter, driven by the toy model binary."""
-    from almo_sweep.contracts import parse_manifest
+    from slab_sweep.contracts import parse_manifest
 
     return parse_manifest(
         {
@@ -459,7 +459,7 @@ def test_run_log_opens_inline_and_can_go_back(qgis_app: QgsApplication, tmp_path
     summary = page._status.toPlainText()
     assert "Sweep complete" in summary
 
-    log = tmp_path / "dampm_log.txt"
+    log = tmp_path / "slab_pro_log.txt"
     log.write_text("line one\nline two\nboom\n", encoding="utf-8")
 
     # Clicking a run's "open log" link shows the log inline, with a way back.
@@ -468,7 +468,7 @@ def test_run_log_opens_inline_and_can_go_back(qgis_app: QgsApplication, tmp_path
     assert "boom" in shown and "Back to study log" in shown
 
     # Going back restores the study summary.
-    page._on_status_anchor(QUrl("almo:back"))
+    page._on_status_anchor(QUrl("slabqgis:back"))
     assert page._status.toPlainText() == summary
 
 
@@ -619,7 +619,7 @@ def test_copy_inputs_conflict_cancel_aborts(qgis_app: QgsApplication, tmp_path: 
 
 
 def _sweepable_manifest_with_dem():
-    from almo_sweep.contracts import parse_manifest
+    from slab_sweep.contracts import parse_manifest
 
     return parse_manifest(
         {
@@ -640,18 +640,18 @@ def _add_raster_layer(path: str) -> str:
 
 
 def test_gui_tool_versions_reports_the_plugin(qgis_app: QgsApplication) -> None:
-    from almo_sweep_qgis.panels.run_task import _gui_tool_versions
+    from slab_qgis.panels.run_task import _gui_tool_versions
 
     tv = _gui_tool_versions()
     assert "gui" in tv
     gui = tv["gui"]
-    assert gui["name"] == "almo_sweep_qgis"
+    assert gui["name"] == "slab_qgis"
     assert gui["version"] is not None  # read from the plugin's metadata.txt
     assert set(gui) >= {"name", "version", "commit", "dirty", "date"}
 
 
 def test_naming_group_has_defaults_and_shows_a_preview(qgis_app: QgsApplication) -> None:
-    from almo_sweep_qgis import settings
+    from slab_qgis import settings
 
     page = RunPage(StudyState())
     assert page._run_name_edit.text() == settings.DEFAULT_RUN_NAME
@@ -663,7 +663,7 @@ def test_naming_group_has_defaults_and_shows_a_preview(qgis_app: QgsApplication)
 def test_single_run_records_runs_json_and_study(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
-    from almo_sweep.contracts import RunResult
+    from slab_sweep.contracts import RunResult
 
     state = StudyState()
     state.set_manifest(toy_manifest)
@@ -700,7 +700,7 @@ def test_single_run_records_runs_json_and_study(
 def test_consecutive_single_runs_get_unique_folders(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
-    from almo_sweep.contracts import RunResult
+    from slab_sweep.contracts import RunResult
 
     state = StudyState()
     state.set_manifest(toy_manifest)
@@ -749,7 +749,7 @@ def _write_raster(path: str, bands: list[float]) -> None:
 
 
 def test_discover_outputs_recovers_a_failed_run_from_disk(tmp_path: Path) -> None:
-    from almo_sweep_qgis.results import load_run
+    from slab_qgis.results import load_run
 
     # A failed run leaves artefacts under <run>/raw/ even though result.json lists no outputs.
     raw = tmp_path / "raw"
@@ -773,7 +773,7 @@ def test_failed_single_run_offers_load_anyway_and_loads_on_click(
     qgis_app: QgsApplication, toy_manifest, tmp_path: Path
 ) -> None:
     pytest.importorskip("osgeo")
-    from almo_sweep.contracts import RunResult
+    from slab_sweep.contracts import RunResult
 
     # Simulate a finished pipeline carrying one failed single run whose model still wrote a raster.
     run_dir = tmp_path / "proj" / "proj_000001"
@@ -789,17 +789,17 @@ def test_failed_single_run_offers_load_anyway_and_loads_on_click(
     page._project_root_path = str(tmp_path / "proj")
     page._is_sweep = False
 
-    failed = RunResult.failure("proj_000001", "dampm crashed. Full log: nope.txt")
+    failed = RunResult.failure("proj_000001", "slab-pro crashed. Full log: nope.txt")
     page._on_pipeline_finished([failed])
 
     # The failure is reported with a "load results anyway" link, and nothing was auto-loaded.
     html = page._status_html
-    assert "almo:load-anyway" in html
+    assert "slabqgis:load-anyway" in html
     assert page._loadable_failed is failed
     assert QgsProject.instance().layerTreeRoot().findGroup("proj_000001") is None
 
     # Clicking the link loads the recovered outputs under the run's group.
-    page._on_status_anchor(QUrl("almo:load-anyway"))
+    page._on_status_anchor(QUrl("slabqgis:load-anyway"))
     group = QgsProject.instance().layerTreeRoot().findGroup("proj_000001")
     assert group is not None
     assert "loaded the failed run's outputs anyway" in page._status.toPlainText().lower()

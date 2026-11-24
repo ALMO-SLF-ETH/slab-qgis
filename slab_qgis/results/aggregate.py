@@ -15,7 +15,7 @@ size, not the run count or the grid size. In that single pass it produces:
 * **weighted pᵗʰ percentile** of ``h_max`` -- the tail (default p90); optional, and the one output
   that must hold all runs' values for a stripe in memory, so the stripe is sized to a memory budget.
 * **per-run scalar metrics** -- each run's overall max depth, max velocity and impacted-cell area,
-  derived here (dampm reports no scalars) so the Results table has something to show.
+  derived here (Slab-Pro reports no scalars) so the Results table has something to show.
 
 The sample ``weight`` is used exactly as recorded, decoupled from how the sample was selected: for
 Monte Carlo / Latin hypercube the weights are equal (so this reduces to a plain mean / frequency);

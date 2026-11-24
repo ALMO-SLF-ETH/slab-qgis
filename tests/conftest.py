@@ -1,9 +1,9 @@
-"""Shared fixtures for the ALMO Sweep plugin tests.
+"""Shared fixtures for the Slab-QGIS plugin tests.
 
 These tests must run under a QGIS Python interpreter (they import ``qgis``). See the README
 for how to invoke pytest through QGIS's interpreter.
 
-If the sibling ``almo-sweep`` engine is not installed into this interpreter, its ``src`` is
+If the sibling ``slab-sweep`` engine is not installed into this interpreter, its ``src`` is
 put on ``sys.path`` so the tests can exercise manifest-driven UI without a prior install.
 """
 
@@ -20,7 +20,7 @@ from qgis.core import QgsApplication
 from qgis.testing import start_app
 
 _SIM_ROOT = Path(__file__).resolve().parents[2]  # .../ALMO/Simulations
-_ENGINE_SRC = _SIM_ROOT / "almo-sweep" / "src"
+_ENGINE_SRC = _SIM_ROOT / "slab-sweep" / "src"
 if _ENGINE_SRC.is_dir():
     # In-process import (this interpreter) ...
     if str(_ENGINE_SRC) not in sys.path:
@@ -55,6 +55,6 @@ def _clean_project() -> Iterator[None]:
 
 
 @pytest.fixture
-def dampm_manifest_path() -> Path:
-    """Path to the engine's reference dampm manifest fixture."""
-    return _SIM_ROOT / "almo-sweep" / "tests" / "fixtures" / "dampm.model.toml"
+def slab_pro_manifest_path() -> Path:
+    """Path to the engine's reference Slab-Pro manifest fixture."""
+    return _SIM_ROOT / "slab-sweep" / "tests" / "fixtures" / "slab_pro.model.toml"

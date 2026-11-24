@@ -32,20 +32,19 @@ jobs:
       - name: Checkout plugin
         uses: actions/checkout@v4
         with:
-          path: QGIS_Simulation_GUI
+          path: slab-qgis
       - name: Checkout engine as a sibling
-        # The plugin tests import the almo-sweep engine; conftest puts a sibling ../almo-sweep/src
-        # on sys.path. If that repo is private, add a PAT with read access as ENGINE_REPO_TOKEN.
+        # The plugin tests import the slab-sweep engine; conftest puts a sibling ../slab-sweep/src
+        # on sys.path.
         uses: actions/checkout@v4
         with:
-          repository: dtiziano/almo-sweep
+          repository: ALMO-SLF-ETH/slab-sweep
           ref: dev
-          path: almo-sweep
-          token: ${{ secrets.ENGINE_REPO_TOKEN || github.token }}
+          path: slab-sweep
       - name: Install pytest into QGIS's Python
         run: pip install pytest --break-system-packages || pip install pytest
       - name: Run tests (headless)
-        working-directory: QGIS_Simulation_GUI
+        working-directory: slab-qgis
         env:
           QT_QPA_PLATFORM: offscreen
         run: xvfb-run -a python3 -m pytest -q
@@ -58,9 +57,9 @@ jobs:
       - name: Build an installable plugin zip
         # A QGIS plugin zip holds the package folder (with metadata.txt) at its root, so it installs
         # via Plugins ▸ Install from ZIP.
-        run: zip -r almo_sweep_qgis.zip almo_sweep_qgis -x '*/__pycache__/*' '*.pyc'
+        run: zip -r slab_qgis.zip slab_qgis -x '*/__pycache__/*' '*.pyc'
       - name: Upload plugin zip
         uses: actions/upload-artifact@v4
         with:
-          name: almo_sweep_qgis-plugin
-          path: almo_sweep_qgis.zip
+          name: slab_qgis-plugin
+          path: slab_qgis.zip

@@ -12,13 +12,13 @@ from typing import Any
 
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
-from almo_sweep_qgis.sweep_plan import default_sweep
+from slab_qgis.sweep_plan import default_sweep
 
 
 class StudyState(QObject):
     """The mutable state of the study the user is assembling."""
 
-    #: Emitted with the new manifest (an ``almo_sweep`` ModelManifest) or ``None`` when it is
+    #: Emitted with the new manifest (an ``slab_sweep`` ModelManifest) or ``None`` when it is
     #: cleared. ``object`` payload keeps this Qt5/Qt6-safe and avoids importing the engine here.
     manifestChanged = pyqtSignal(object)
 
@@ -47,7 +47,7 @@ class StudyState(QObject):
         #: "Resample to" control but not yet applied; the Run page applies these at launch.
         self.resample_requests: dict[str, dict[str, Any]] = {}
         #: The study (sweep) config authored on the Parameters page: a plain-data dict (see
-        #: :func:`~almo_sweep_qgis.sweep_plan.default_sweep`). The Run page reads it at launch.
+        #: :func:`~slab_qgis.sweep_plan.default_sweep`). The Run page reads it at launch.
         self.sweep: dict[str, Any] = default_sweep()
 
     @property

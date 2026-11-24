@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from almo_sweep_qgis import run_naming
+from slab_qgis import run_naming
 
 _NOW = datetime(2026, 11, 6, 14, 30, 5)
 

@@ -2,7 +2,7 @@
 
 This closes the deterministic single-run workflow. Parameters use the model's manifest
 defaults (parameter editing arrives on the Parameters page); the run executes on a background
-:class:`~almo_sweep_qgis.panels.run_task.RunTask` and its output layers are added to the
+:class:`~slab_qgis.panels.run_task.RunTask` and its output layers are added to the
 project when it finishes.
 """
 
@@ -50,13 +50,13 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import engine, run_naming, settings, sweep_plan
-from almo_sweep_qgis.dem.resample import default_resampled_path, raster_resolution
-from almo_sweep_qgis.dem.style import apply_hillshade
-from almo_sweep_qgis.panels.run_pipeline import ResampleTask, RunController
-from almo_sweep_qgis.panels.run_task import RunTask, SweepTask
-from almo_sweep_qgis.results import load_run
-from almo_sweep_qgis.state import StudyState
+from slab_qgis import engine, run_naming, settings, sweep_plan
+from slab_qgis.dem.resample import default_resampled_path, raster_resolution
+from slab_qgis.dem.style import apply_hillshade
+from slab_qgis.panels.run_pipeline import ResampleTask, RunController
+from slab_qgis.panels.run_task import RunTask, SweepTask
+from slab_qgis.results import load_run
+from slab_qgis.state import StudyState
 
 
 class RunPage(QWidget):
@@ -321,7 +321,7 @@ class RunPage(QWidget):
                 task.cancel()
 
     def _running_tasks(self) -> list[RunTask]:
-        """All active ALMO run tasks (this page's run plus any other RunTask the manager holds)."""
+        """All active slab-qgis run tasks (this page's run plus any other RunTask the manager holds)."""
         tasks: list[RunTask] = []
         with contextlib.suppress(Exception):
             for task in QgsApplication.taskManager().tasks():
@@ -982,7 +982,7 @@ class RunPage(QWidget):
             href = QUrl.fromLocalFile(log_path).toString()
             html += f' · <a href="{href}">open log</a>'
         if allow_load:
-            html += ' · <a href="almo:load-anyway">load results anyway</a>'
+            html += ' · <a href="slabqgis:load-anyway">load results anyway</a>'
         return html
 
     def _on_pipeline_failed(self, message: str) -> None:
@@ -1041,11 +1041,11 @@ class RunPage(QWidget):
     def _on_status_anchor(self, url: QUrl) -> None:
         """Handle a click in the status view: show a run log inline, or go back to the summary."""
         target = url.toString()
-        if target == "almo:back":
+        if target == "slabqgis:back":
             self._status.setHtml(self._status_html)  # restore the study/run summary
-        elif target == "almo:load-anyway":
+        elif target == "slabqgis:load-anyway":
             self._load_failed_result()
-        elif target == "almo:editor" and self._current_log:
+        elif target == "slabqgis:editor" and self._current_log:
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_log))  # open in the OS editor
         elif url.isLocalFile():
             self._show_log(url.toLocalFile())
@@ -1110,8 +1110,8 @@ class RunPage(QWidget):
             text = "… (truncated to the last 200 KB) …\n" + text[-200_000:]
         name = escape(os.path.basename(path))
         header = (
-            '<div style="margin:2px 0">⬅ <a href="almo:back">Back to study log</a> · '
-            f'<a href="almo:editor">open in editor</a> — <code>{name}</code></div>'
+            '<div style="margin:2px 0">⬅ <a href="slabqgis:back">Back to study log</a> · '
+            f'<a href="slabqgis:editor">open in editor</a> — <code>{name}</code></div>'
         )
         self._status.setHtml(f"{header}<pre style='white-space:pre-wrap'>{escape(text)}</pre>")
 

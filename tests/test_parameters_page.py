@@ -5,9 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis import engine
-from almo_sweep_qgis.panels.parameters_page import ParametersPage, _ResamplePanel, _SweepEditor
-from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
 from qgis.gui import QgsMapLayerComboBox
 from qgis.PyQt.QtWidgets import (
@@ -19,12 +16,15 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox,
     QWidget,
 )
+from slab_qgis import engine
+from slab_qgis.panels.parameters_page import ParametersPage, _ResamplePanel, _SweepEditor
+from slab_qgis.state import StudyState
 
 
 @pytest.fixture
-def manifest(dampm_manifest_path: Path):
+def manifest(slab_pro_manifest_path: Path):
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    return engine.load_manifest(str(dampm_manifest_path))
+    return engine.load_manifest(str(slab_pro_manifest_path))
 
 
 def _outside_panel(widget: QWidget) -> bool:
@@ -196,7 +196,7 @@ def test_sweep_toggle_and_selection_write_state(qgis_app: QgsApplication, manife
 
 def test_only_visible_sweepable_params_enter_the_sweep(qgis_app: QgsApplication) -> None:
     # A sweepable parameter hidden by a visible_when must not be offered to / kept in the sweep.
-    from almo_sweep.contracts import parse_manifest
+    from slab_sweep.contracts import parse_manifest
 
     m = parse_manifest(
         {
@@ -301,17 +301,23 @@ def test_swept_field_is_tinted(qgis_app: QgsApplication, manifest) -> None:
     assert "background-color" in field.styleSheet()  # swept -> tinted
 
 
-# --- conditional input visibility against the real dampm manifest ---------------------
-def _dampm_model_toml() -> Path:
-    # tests/ -> QGIS_Simulation_GUI -> Simulations
-    root = Path(__file__).resolve().parents[2]
-    return root / "dampm" / "interface" / "model.toml"
+# --- conditional input visibility against the real Slab-Pro manifest ------------------
+def _slab_pro_model_toml() -> Path:
+    # Slab-Pro's generated manifest in a sibling checkout (Slab-Pro-dev or Slab-Pro), if any.
+    root = Path(__file__).resolve().parents[2]  # tests/ -> slab-qgis -> Simulations
+    for repo in ("Slab-Pro-dev", "Slab-Pro"):
+        path = root / repo / "interface" / "model.toml"
+        if path.exists():
+            return path
+    return root / "Slab-Pro" / "interface" / "model.toml"
 
 
-@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+@pytest.mark.skipif(
+    not _slab_pro_model_toml().exists(), reason="no Slab-Pro checkout with interface/model.toml"
+)
 def test_release_sources_show_only_for_their_shape(qgis_app: QgsApplication) -> None:
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    manifest = engine.load_manifest(str(_slab_pro_model_toml()))
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
@@ -336,10 +342,12 @@ def test_release_sources_show_only_for_their_shape(qgis_app: QgsApplication) -> 
     assert raster_row.isHidden()
 
 
-@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+@pytest.mark.skipif(
+    not _slab_pro_model_toml().exists(), reason="no Slab-Pro checkout with interface/model.toml"
+)
 def test_release_estimate_lives_in_release_group_and_updates(qgis_app: QgsApplication) -> None:
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    manifest = engine.load_manifest(str(_slab_pro_model_toml()))
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
@@ -359,14 +367,16 @@ def test_release_estimate_lives_in_release_group_and_updates(qgis_app: QgsApplic
     assert "24.0 m" in page._volume_label.text()
 
 
-@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+@pytest.mark.skipif(
+    not _slab_pro_model_toml().exists(), reason="no Slab-Pro checkout with interface/model.toml"
+)
 def test_release_estimate_uses_mean_for_normal_and_range_for_uniform(
     qgis_app: QgsApplication,
 ) -> None:
     # When release depth (h0) is swept, the estimate follows its distribution: Normal -> mean
     # (a single central figure); Uniform -> a low-high range for the depth-dependent volume.
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    manifest = engine.load_manifest(str(_slab_pro_model_toml()))
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
@@ -400,14 +410,16 @@ def test_release_estimate_uses_mean_for_normal_and_range_for_uniform(
     assert " to " not in page._volume_label.text()
 
 
-@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+@pytest.mark.skipif(
+    not _slab_pro_model_toml().exists(), reason="no Slab-Pro checkout with interface/model.toml"
+)
 def test_release_estimate_updates_when_polygon_is_edited_and_committed(
     qgis_app: QgsApplication,
 ) -> None:
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
     from qgis.core import QgsFeature, QgsGeometry, QgsProject, QgsVectorLayer
 
-    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    manifest = engine.load_manifest(str(_slab_pro_model_toml()))
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)
@@ -434,11 +446,13 @@ def test_release_estimate_updates_when_polygon_is_edited_and_committed(
     assert "200.0 m" in page._area_label.text()  # and still correct after the commit
 
 
-@pytest.mark.skipif(not _dampm_model_toml().exists(), reason="dampm model.toml not generated")
+@pytest.mark.skipif(
+    not _slab_pro_model_toml().exists(), reason="no Slab-Pro checkout with interface/model.toml"
+)
 def test_deleting_selected_layer_reverts_to_no_layer(qgis_app: QgsApplication) -> None:
     from qgis.core import QgsProject, QgsVectorLayer
 
-    manifest = engine.load_manifest(str(_dampm_model_toml()))
+    manifest = engine.load_manifest(str(_slab_pro_model_toml()))
     state = StudyState()
     state.set_manifest(manifest)
     page = ParametersPage(state)

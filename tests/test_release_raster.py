@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis.release_raster import (
+from slab_qgis.release_raster import (
     ReleaseRasterError,
     build_release_raster,
 )
@@ -140,8 +140,8 @@ def test_corner_radius_larger_than_polygon_is_reported(tmp_path: Path) -> None:
 def test_dialog_and_page_wiring_construct(qgis_app) -> None:
     # Smoke test: the dialog and the preprocessing page import and build headlessly (catches wiring
     # and import regressions). No build is launched.
-    from almo_sweep_qgis.panels.preprocessing_page import PreprocessingPage
-    from almo_sweep_qgis.panels.release_raster_dialog import ReleaseRasterDialog
+    from slab_qgis.panels.preprocessing_page import PreprocessingPage
+    from slab_qgis.panels.release_raster_dialog import ReleaseRasterDialog
 
     dialog = ReleaseRasterDialog()
     assert dialog._height_spin.value() > 0

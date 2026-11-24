@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from almo_sweep_qgis.dem import resample
+from slab_qgis.dem import resample
 
 
 def test_res_suffix_matches_convention() -> None:

@@ -18,7 +18,7 @@ from typing import Any
 
 from qgis.core import QgsTask
 
-from almo_sweep_qgis import engine, settings
+from slab_qgis import engine, settings
 
 
 class SweepTask(QgsTask):
@@ -38,7 +38,7 @@ class SweepTask(QgsTask):
         *,
         max_workers: int = 1,
         retries: int = 0,
-        description: str = "ALMO Sweep study",
+        description: str = "Slab-QGIS study",
     ) -> None:
         super().__init__(description, QgsTask.Flag.CanCancel)
         self._manifest = manifest
@@ -84,7 +84,7 @@ class SweepTask(QgsTask):
 class RunTask(QgsTask):
     """Runs ``engine.run_one`` for one resolved run-spec."""
 
-    def __init__(self, manifest: Any, runspec: Any, description: str = "ALMO Sweep run") -> None:
+    def __init__(self, manifest: Any, runspec: Any, description: str = "Slab-QGIS run") -> None:
         super().__init__(description, QgsTask.Flag.CanCancel)
         self._manifest = manifest
         self._runspec = runspec
@@ -92,7 +92,7 @@ class RunTask(QgsTask):
         self.error_message: str | None = None
 
     def run(self) -> bool:
-        # Supply the model's configured runtime settings (e.g. DAMPM_BIN) as env vars, so no
+        # Supply the model's configured runtime settings (e.g. SLAB_PRO_BIN) as env vars, so no
         # shell environment is needed when QGIS is launched normally.
         env = dict(os.environ)
         env.update(settings.runtime_env(self._manifest))
@@ -125,14 +125,14 @@ def _gui_tool_versions() -> dict[str, dict[str, Any]]:
     Returned under ``"gui"`` for the engine to write into each run's ``provenance.json``. Empty if
     the engine (which provides the git helper) is unavailable."""
     try:
-        from almo_sweep.provenance import package_provenance
+        from slab_sweep.provenance import package_provenance
     except Exception:
         return {}
-    import almo_sweep_qgis
+    import slab_qgis
 
-    pkg_dir = Path(almo_sweep_qgis.__file__).resolve().parent
+    pkg_dir = Path(slab_qgis.__file__).resolve().parent
     version = _read_plugin_version(pkg_dir / "metadata.txt")
-    return {"gui": package_provenance("almo_sweep_qgis", pkg_dir, version=version)}
+    return {"gui": package_provenance("slab_qgis", pkg_dir, version=version)}
 
 
 def _read_plugin_version(metadata_path: Path) -> str | None:

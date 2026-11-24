@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import pytest
-from almo_sweep_qgis import engine, settings
-from almo_sweep_qgis.panels.settings_dialog import RuntimeSettingsDialog
 from qgis.core import QgsApplication
 from qgis.gui import QgsFileWidget
+from slab_qgis import engine, settings
+from slab_qgis.panels.settings_dialog import RuntimeSettingsDialog
 
 
 @pytest.fixture
 def manifest():
     assert engine.AVAILABLE, f"engine unavailable: {engine.IMPORT_ERROR}"
-    from almo_sweep.contracts import parse_manifest
+    from slab_sweep.contracts import parse_manifest
 
     return parse_manifest(
         {

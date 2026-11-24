@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from almo_sweep_qgis.results.study import SweptParam, load_study
+from slab_qgis.results.study import SweptParam, load_study
 
 
 def _write(path: Path, data: dict) -> None:
@@ -30,7 +30,7 @@ def _make_study(root: Path) -> None:
     _write(
         root / "runs.json",
         {
-            "manifest": {"name": "dampm", "version": "1.0", "sha256": "abc"},
+            "manifest": {"name": "slab-pro", "version": "1.0", "sha256": "abc"},
             "study": {"scheme": {"kind": "grid"}, "seed": 7, "count": 2},
             "runs": [
                 {
@@ -57,9 +57,9 @@ def _make_study(root: Path) -> None:
     _write(
         root / "brienz_000001" / "provenance.json",
         {
-            "engine": {"name": "almo-sweep", "commit": "deadbee", "dirty": False},
-            "tools": {"gui": {"name": "almo_sweep_qgis", "commit": "cafe", "dirty": True}},
-            "model": {"dampm_binary": {"commit": "f00", "dirty": False}},
+            "engine": {"name": "slab-sweep", "commit": "deadbee", "dirty": False},
+            "tools": {"gui": {"name": "slab_qgis", "commit": "cafe", "dirty": True}},
+            "model": {"slab_pro_binary": {"commit": "f00", "dirty": False}},
         },
     )
     _write(
@@ -73,7 +73,7 @@ def test_load_study_reads_plan_and_runs(tmp_path: Path) -> None:
     s = load_study(tmp_path)
 
     assert s.project == "brienz" and s.scheme == "grid" and s.seed == 7 and s.count == 2
-    assert s.manifest["name"] == "dampm"
+    assert s.manifest["name"] == "slab-pro"
     assert s.n_total == 2 and s.n_success == 1 and s.n_failed == 1
     assert s.total_duration_s == 15.0
     assert [p.name for p in s.swept] == ["friction", "density"]

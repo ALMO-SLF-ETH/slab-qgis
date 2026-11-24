@@ -4,7 +4,7 @@ A single run (whether a deterministic run from the Run page, or one sample picke
 sweep on the Results page) is loaded the same way: all of its outputs go into one group named after
 the run. Inside that group:
 
-* a directory of raster frames (e.g. dampm's ``grid_series``) becomes temporal subgroups that step
+* a directory of raster frames (e.g. Slab-Pro's ``grid_series``) becomes temporal subgroups that step
   in time under the Temporal Controller;
 * a multi-band raster (``final_grid``, ``max_values``) is unpacked into one single-band
   pseudocolour (Turbo) layer per band;
@@ -38,11 +38,11 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QDate, QDateTime, QTime
 from qgis.PyQt.QtGui import QColor
 
-#: Frame-raster bands to present as temporal groups: (band index, subgroup label). Matches dampm's
+#: Frame-raster bands to present as temporal groups: (band index, subgroup label). Matches Slab-Pro's
 #: grid rasters (band 1 = flow height h, band 2 = 2D speed v).
 FRAME_BANDS = ((1, "flow height h"), (2, "velocity v_2D"))
 
-#: dampm's nodata sentinel for its output rasters.
+#: Slab-Pro's nodata sentinel for its output rasters.
 _NODATA = -9999.0
 
 
@@ -72,7 +72,7 @@ def load_run_outputs(
     frame_series = False
     for name, path in outputs.items():
         if os.path.isdir(path):
-            # A directory of raster frames -> temporal subgroup (e.g. dampm's grid_series).
+            # A directory of raster frames -> temporal subgroup (e.g. Slab-Pro's grid_series).
             n = _load_frame_series(name, path, run_group, output_dt)
             loaded += n
             frame_series = frame_series or n > 0
@@ -98,7 +98,7 @@ def discover_outputs(output_dir: str) -> dict[str, str]:
     A successful run lists its outputs in ``result.json``; a *failed* run does not (it writes
     ``outputs: {}``), even when the model had already produced some or all of its rasters before
     failing. This scans the run folder for those artefacts and returns the same ``name -> path``
-    shape a successful run would, so the outputs can still be loaded. Mirrors the dampm adapter's
+    shape a successful run would, so the outputs can still be loaded. Mirrors the Slab-Pro adapter's
     own output collection (``max_values``, ``final_grid``, ``grid_series``, ``particles``); empty
     if nothing is found.
     """

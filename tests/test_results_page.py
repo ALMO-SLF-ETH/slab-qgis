@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 
 import numpy as np
-from almo_sweep_qgis.panels.results_page import ResultsPage, _num_cell
-from almo_sweep_qgis.results.aggregate import AggregateConfig, aggregate_max_values
-from almo_sweep_qgis.results.study import load_study
-from almo_sweep_qgis.state import StudyState
 from qgis.core import QgsApplication
 from qgis.PyQt.QtCore import Qt
+from slab_qgis.panels.results_page import ResultsPage, _num_cell
+from slab_qgis.results.aggregate import AggregateConfig, aggregate_max_values
+from slab_qgis.results.study import load_study
+from slab_qgis.state import StudyState
 
 GT = (0.0, 10.0, 0.0, 0.0, 0.0, -10.0)
 
@@ -57,7 +57,7 @@ def _make_project(root: Path) -> None:
     (root / "runs.json").write_text(
         json.dumps(
             {
-                "manifest": {"name": "dampm", "version": "1.0"},
+                "manifest": {"name": "slab-pro", "version": "1.0"},
                 "runs": [
                     {
                         "run_id": "p_000001",
@@ -133,7 +133,7 @@ def test_sorting_a_swept_column_reorders_rows(qgis_app: QgsApplication, tmp_path
 
 def test_metrics_fill_correct_run_after_sorting(qgis_app: QgsApplication, tmp_path: Path) -> None:
     # After the user sorts, filling per-run metrics must still land on the right run's row.
-    from almo_sweep_qgis.results.aggregate import AggregateInput
+    from slab_qgis.results.aggregate import AggregateInput
 
     _make_project(tmp_path)
     page = ResultsPage(StudyState())
@@ -225,7 +225,7 @@ def test_results_page_aggregation_task_runs(qgis_app: QgsApplication, tmp_path: 
     # Drive the aggregation directly (no task manager) to check the page's inputs produce maps.
     _make_project(tmp_path)
     summary = load_study(tmp_path)
-    from almo_sweep_qgis.results.aggregate import AggregateInput
+    from slab_qgis.results.aggregate import AggregateInput
 
     inputs = [
         AggregateInput(r.run_id, r.max_values_path(), r.weight) for r in summary.successful_runs()

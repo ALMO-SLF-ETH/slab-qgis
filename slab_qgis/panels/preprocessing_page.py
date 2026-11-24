@@ -57,11 +57,11 @@ class PreprocessingPage(QWidget):
         root.setAlignment(Qt.AlignmentFlag.AlignTop)
 
     def _open_dem_download(self) -> None:
-        from almo_sweep_qgis.panels.dem_download_dialog import DemDownloadDialog
+        from slab_qgis.panels.dem_download_dialog import DemDownloadDialog
 
         DemDownloadDialog(self).exec()
 
     def _open_release_raster(self) -> None:
-        from almo_sweep_qgis.panels.release_raster_dialog import ReleaseRasterDialog
+        from slab_qgis.panels.release_raster_dialog import ReleaseRasterDialog
 
         ReleaseRasterDialog(self).exec()

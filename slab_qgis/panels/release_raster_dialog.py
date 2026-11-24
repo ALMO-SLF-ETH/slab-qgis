@@ -1,11 +1,11 @@
-"""Dialog to turn a polygon layer into a release-depth raster for a dampm RASTER release.
+"""Dialog to turn a polygon layer into a release-depth raster for a Slab-Pro RASTER release.
 
 The user picks a polygon layer (the release zones), a release depth, an output cell size, and
 optionally a corner-rounding radius and a border taper width. The polygons are extruded to the
 chosen depth, their corners rounded, and the depth feathered to the edges; the result is written as
 a single-band GeoTIFF (``0`` where no material) and added to the map, ready to select as the
 ``release_raster`` input. The heavy raster work runs in a background task so the UI stays
-responsive. See :mod:`almo_sweep_qgis.release_raster` for the computation.
+responsive. See :mod:`slab_qgis.release_raster` for the computation.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from almo_sweep_qgis import release_raster
-from almo_sweep_qgis.results.load_run import turbo_ramp
+from slab_qgis import release_raster
+from slab_qgis.results.load_run import turbo_ramp
 
 
 class ReleaseRasterDialog(QDialog):
@@ -50,7 +50,7 @@ class ReleaseRasterDialog(QDialog):
         self._add_to_map = True
 
         caption = QLabel(
-            "Fill one or more polygons with a release depth to make a RASTER release for dampm. "
+            "Fill one or more polygons with a release depth to make a RASTER release for Slab-Pro. "
             "Corners can be rounded and the depth feathered to the edges. The raster is 0 where no "
             "material sits. At run time only cells at or above the model's 'Raster minimum depth' "
             "(h_min) release, so keep the depth above it."

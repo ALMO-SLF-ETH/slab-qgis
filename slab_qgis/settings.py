@@ -12,18 +12,18 @@ from typing import Any
 
 from qgis.core import QgsSettings
 
-_PREFIX = "almo_sweep/runtime"
+_PREFIX = "slab_qgis/runtime"
 #: Registry of model manifests the user has added, and the last one they had open.
-_MODELS_KEY = "almo_sweep/models"
-_LAST_MODEL_KEY = "almo_sweep/last_model"
+_MODELS_KEY = "slab_qgis/models"
+_LAST_MODEL_KEY = "slab_qgis/last_model"
 
 # ---------------------------------------------------------------------------
 # Run naming: the template and date/time formats used to name single runs'
 # output folders (so manual runs behave like a sweep -- each a new folder).
 # ---------------------------------------------------------------------------
-_RUN_NAME_KEY = "almo_sweep/naming/run_name"
-_DATE_FORMAT_KEY = "almo_sweep/naming/date_format"
-_TIME_FORMAT_KEY = "almo_sweep/naming/time_format"
+_RUN_NAME_KEY = "slab_qgis/naming/run_name"
+_DATE_FORMAT_KEY = "slab_qgis/naming/date_format"
+_TIME_FORMAT_KEY = "slab_qgis/naming/time_format"
 
 #: Defaults. The run name uses bare placeholders (PROJECT, DATE, TIME, RUNCOUNTER); the date/time
 #: formats use friendly tokens (YYYY/MM/DD, hh/mm/ss) translated to strftime in ``run_naming``.

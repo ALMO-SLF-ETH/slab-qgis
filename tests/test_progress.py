@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from almo_sweep_qgis.progress import (
+from slab_qgis.progress import (
     BatchProgress,
     ProgressSnapshot,
     format_coarse_range,
