@@ -4,8 +4,8 @@ A single run (whether a deterministic run from the Run page, or one sample picke
 sweep on the Results page) is loaded the same way: all of its outputs go into one group named after
 the run. Inside that group:
 
-* a directory of raster frames (e.g. Slab-Pro's ``grid_series``) becomes temporal subgroups that step
-  in time under the Temporal Controller;
+* a directory of raster frames (e.g. Slab-Pro's ``grid_series``) becomes temporal subgroups that
+  step in time under the Temporal Controller;
 * a multi-band raster (``final_grid``, ``max_values``) is unpacked into one single-band
   pseudocolour (Turbo) layer per band;
 * a vector output is added as-is.
@@ -38,8 +38,8 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QDate, QDateTime, QTime
 from qgis.PyQt.QtGui import QColor
 
-#: Frame-raster bands to present as temporal groups: (band index, subgroup label). Matches Slab-Pro's
-#: grid rasters (band 1 = flow height h, band 2 = 2D speed v).
+#: Frame-raster bands to present as temporal groups: (band index, subgroup label). Matches
+#: Slab-Pro's grid rasters (band 1 = flow height h, band 2 = 2D speed v).
 FRAME_BANDS = ((1, "flow height h"), (2, "velocity v_2D"))
 
 #: Slab-Pro's nodata sentinel for its output rasters.

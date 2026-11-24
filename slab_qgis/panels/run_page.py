@@ -321,7 +321,7 @@ class RunPage(QWidget):
                 task.cancel()
 
     def _running_tasks(self) -> list[RunTask]:
-        """All active slab-qgis run tasks (this page's run plus any other RunTask the manager holds)."""
+        """All active run tasks: this page's run plus any other RunTask the manager holds."""
         tasks: list[RunTask] = []
         with contextlib.suppress(Exception):
             for task in QgsApplication.taskManager().tasks():

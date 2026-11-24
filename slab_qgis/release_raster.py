@@ -27,8 +27,9 @@ import math
 import os
 from dataclasses import dataclass
 
-#: Slab-Pro's nodata sentinel. The raster never actually contains it (no-material cells are 0, which
-#: Slab-Pro reads as "below any h_min, so no release"), but it is tagged for consistency with the rest.
+#: Slab-Pro's nodata sentinel. The raster never actually contains it (no-material cells are 0,
+#: which Slab-Pro reads as "below any h_min, so no release"), but it is tagged for consistency
+#: with the rest.
 NODATA = -9999.0
 
 
