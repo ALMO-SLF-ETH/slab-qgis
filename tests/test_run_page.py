@@ -844,8 +844,8 @@ def test_frame_series_loads_two_turbo_temporal_groups(
     assert all(lyr.temporalProperties().isActive() for lyr in pseudo)
     # Every frame in a band's group shares that band's ensemble range across all frames:
     # band 1 -> [0, 2], band 2 -> [0, 20] (Turbo, min and max pinned to the group ensemble).
-    band1 = [lyr for lyr in pseudo if lyr.renderer().band() == 1]
-    band2 = [lyr for lyr in pseudo if lyr.renderer().band() == 2]
+    band1 = [lyr for lyr in pseudo if lyr.renderer().inputBand() == 1]
+    band2 = [lyr for lyr in pseudo if lyr.renderer().inputBand() == 2]
     assert band1 and all(abs(lyr.renderer().classificationMin() - 0.0) < 1e-6 for lyr in band1)
     assert band1 and all(abs(lyr.renderer().classificationMax() - 2.0) < 1e-6 for lyr in band1)
     assert band2 and all(abs(lyr.renderer().classificationMin() - 0.0) < 1e-6 for lyr in band2)
