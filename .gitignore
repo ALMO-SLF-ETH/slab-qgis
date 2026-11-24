@@ -8,3 +8,6 @@ __pycache__/
 # Stray run outputs written during manual/headless testing
 tests/run_*/
 tests/output/
+
+# QGIS writes a style database next to the project it opens
+symbology-style.db
