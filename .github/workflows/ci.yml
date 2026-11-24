@@ -2,16 +2,23 @@ name: CI
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: [main, dev]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: Lint (ruff, via pinned pre-commit hooks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m pip install pre-commit
@@ -23,43 +30,74 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # LTR and the current release. QGIS ships the Python the plugin runs under; the code is
-        # written to the Qt5/Qt6 intersection, so both should pass.
-        qgis: ["release-3_40", "latest"]
+        # The long-term release (3.44, Qt 5, = qgisMinimumVersion) and the current release
+        # (4.x, Qt 6). The code is written to the Qt 5/Qt 6 intersection, so both must pass.
+        qgis: ["ltr", "stable"]
     container:
       image: qgis/qgis:${{ matrix.qgis }}
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: slab-qgis
       - name: Checkout engine as a sibling
         # The plugin tests import the slab-sweep engine; conftest puts a sibling ../slab-sweep/src
-        # on sys.path.
-        uses: actions/checkout@v4
+        # on sys.path. Test against the engine branch this change is headed for: main for pull
+        # requests into main (and pushes to main), dev otherwise.
+        uses: actions/checkout@v7
         with:
           repository: ALMO-SLF-ETH/slab-sweep
-          ref: dev
+          ref: ${{ (github.base_ref || github.ref_name) == 'main' && 'main' || 'dev' }}
           path: slab-sweep
+      - name: Show versions
+        run: |
+          python3 -c "from qgis.core import Qgis; print('QGIS', Qgis.version())"
+          python3 -c "from qgis.PyQt.QtCore import QT_VERSION_STR; print('Qt', QT_VERSION_STR)"
+          python3 --version
       - name: Install pytest into QGIS's Python
         run: pip install pytest --break-system-packages || pip install pytest
       - name: Run tests (headless)
         working-directory: slab-qgis
         env:
           QT_QPA_PLATFORM: offscreen
-        run: xvfb-run -a python3 -m pytest -q
+        run: xvfb-run -a python3 -m pytest -q -rs
 
   package:
     name: Package plugin zip
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build an installable plugin zip
-        # A QGIS plugin zip holds the package folder (with metadata.txt) at its root, so it installs
-        # via Plugins ▸ Install from ZIP.
-        run: zip -r slab_qgis.zip slab_qgis -x '*/__pycache__/*' '*.pyc'
+        # A QGIS plugin zip holds the package folder (with metadata.txt) at its root, so it
+        # installs via Plugins > Install from ZIP. plugins.qgis.org also requires the licence
+        # inside that folder.
+        run: |
+          mkdir -p build
+          cp -r slab_qgis build/slab_qgis
+          cp LICENSE build/slab_qgis/LICENSE
+          find build -name '__pycache__' -prune -exec rm -rf {} +
+          (cd build && zip -qr ../slab_qgis.zip slab_qgis)
+      - name: Check the zip
+        run: |
+          python3 - <<'PY'
+          import configparser, zipfile
+          z = zipfile.ZipFile("slab_qgis.zip")
+          names = z.namelist()
+          for required in ("slab_qgis/__init__.py", "slab_qgis/metadata.txt", "slab_qgis/LICENSE"):
+              assert required in names, f"missing {required}"
+          assert not [n for n in names if n.endswith(".pyc") or "__pycache__" in n], "bytecode in zip"
+          assert all(n.startswith("slab_qgis/") for n in names), "files outside slab_qgis/"
+          meta = configparser.ConfigParser()
+          meta.read_string(z.read("slab_qgis/metadata.txt").decode("utf-8"))
+          general = meta["general"]
+          for key in ("name", "qgisMinimumVersion", "description", "about", "version",
+                      "author", "email", "repository", "tracker", "icon"):
+              assert general.get(key), f"metadata.txt lacks {key}"
+          assert f"slab_qgis/{general['icon']}" in names, "icon not in zip"
+          print(general["name"], general["version"], f"({len(names)} files)")
+          PY
       - name: Upload plugin zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slab_qgis-plugin
           path: slab_qgis.zip
