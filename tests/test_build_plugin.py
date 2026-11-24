@@ -1,4 +1,4 @@
-"""Tests for scripts/build_plugin.py (the plugin zip with the bundled engine) and engine.model_env."""
+"""Tests for scripts/build_plugin.py, scripts/bump_engine.py and engine.model_env."""
 
 from __future__ import annotations
 
@@ -91,3 +91,21 @@ def test_model_env_adds_the_bundled_engine_only_when_used(
     assert env["PYTHONPATH"].split(os.pathsep) == ["first", str(engine.VENDOR_DIR)]
     assert engine.model_env(env)["PYTHONPATH"] == env["PYTHONPATH"]  # not added twice
     assert base["PYTHONPATH"] == "first"  # input left untouched
+
+
+def test_bump_rewrites_the_pin_and_keeps_comments() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "bump_engine", _SCRIPT.with_name("bump_engine.py")
+    )
+    assert spec is not None and spec.loader is not None
+    bump = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bump)
+
+    text = (_SCRIPT.parents[1] / "engine.toml").read_text(encoding="utf-8")
+    new = bump.update_pin(text, "1.2.0", "slab_sweep-1.2.0-py3-none-any.whl", "ab" * 32)
+    assert 'version = "1.2.0"' in new
+    assert 'sha256 = "' + "ab" * 32 + '"' in new
+    assert new.startswith("# The slab-sweep engine bundled")
+    # CRLF checkouts work too
+    crlf = bump.update_pin(text.replace("\n", "\r\n"), "1.2.0", "w.whl", "cd" * 32)
+    assert 'wheel = "w.whl"\r\n' in crlf

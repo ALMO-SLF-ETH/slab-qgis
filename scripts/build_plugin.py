@@ -71,7 +71,7 @@ def fetch_pinned_wheel(pin: dict[str, str], dest: Path) -> Path:
     url = f"{ENGINE_RELEASES}/v{pin['version']}/{pin['wheel']}"
     target = dest / pin["wheel"]
     print(f"downloading {url}")
-    with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 - fixed https URL
+    with urllib.request.urlopen(url, timeout=60) as response:
         target.write_bytes(response.read())
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     if digest != pin["sha256"].lower():

@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from pathlib import Path
 
 _CHILD = r"""
 import os, sys, tempfile
