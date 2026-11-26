@@ -84,7 +84,7 @@ def parse_registry(data: bytes | str) -> list[CatalogModel]:
 # Platform and versions
 # ---------------------------------------------------------------------------
 def platform_key(system: str | None = None, machine: str | None = None) -> str:
-    """This machine as a registry key, e.g. ``windows-x86_64``, ``linux-x86_64``, ``macos-arm64``."""
+    """This machine as a registry key: ``windows-x86_64``, ``linux-x86_64``, ``macos-arm64``."""
     system = (system or sys.platform).lower()
     machine = (machine or platform.machine()).lower()
     os_name = (
@@ -228,7 +228,10 @@ def _extract(archive: Path, dest: Path) -> None:
 
 def find_manifest(folder: Path) -> Path:
     """The package's ``model.toml``: at the top or inside the single top-level folder."""
-    candidates = [folder / MANIFEST_NAME, *(p / MANIFEST_NAME for p in folder.iterdir() if p.is_dir())]
+    candidates = [
+        folder / MANIFEST_NAME,
+        *(p / MANIFEST_NAME for p in folder.iterdir() if p.is_dir()),
+    ]
     found = [p for p in candidates if p.is_file()]
     if not found:
         raise CatalogError(

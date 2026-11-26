@@ -175,8 +175,11 @@ class ModelsDialog(QDialog):
         current = have[model.id].version if model and model.id in have else ""
         latest = self._latest.get(model.id, "") if model else ""
         self.install_button.setText(
-            "Update" if current and latest and core.is_newer(latest, current) else
-            "Reinstall" if current else "Install"
+            "Update"
+            if current and latest and core.is_newer(latest, current)
+            else "Reinstall"
+            if current
+            else "Install"
         )
         self.install_button.setEnabled(model is not None and bool(latest))
         self.remove_button.setEnabled(bool(current))

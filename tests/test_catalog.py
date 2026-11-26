@@ -40,7 +40,9 @@ _REGISTRY = {
 }
 
 
-def _package_zip(version: str, *, manifest: bool = True, extra: dict[str, str] | None = None) -> bytes:
+def _package_zip(
+    version: str, *, manifest: bool = True, extra: dict[str, str] | None = None
+) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         top = f"toy-{version}-testos"
@@ -158,7 +160,7 @@ def test_tar_gz_package_installs(tmp_path: Path) -> None:
 def test_package_without_manifest_is_rejected_and_leaves_nothing(tmp_path: Path) -> None:
     archive = tmp_path / "toy.zip"
     archive.write_bytes(_package_zip("1.0.0", manifest=False))
-    with pytest.raises(CatalogError, match="no model.toml"):
+    with pytest.raises(CatalogError, match=r"no model.toml"):
         core.install_archive(archive, tmp_path / "models", "toy", "1.0.0")
     assert list((tmp_path / "models" / "toy").iterdir()) == []
 
@@ -188,7 +190,12 @@ def test_update_replaces_the_old_version(github: FakeGitHub) -> None:
 
     github.publish("example/toy", "1.1.0", {"toy-1.1.0-testos.zip": _package_zip("1.1.0")})
     (update,) = service.check_updates(github.fetch)
-    assert (update.kind, update.id, update.current, update.latest) == ("model", "toy", "1.0.0", "1.1.0")
+    assert (update.kind, update.id, update.current, update.latest) == (
+        "model",
+        "toy",
+        "1.0.0",
+        "1.1.0",
+    )
 
     new = service.install(toy, github.fetch, github.download)
     assert new.replaced == "1.0.0"
@@ -210,7 +217,7 @@ def test_checksum_mismatch_aborts_the_install(github: FakeGitHub) -> None:
 def test_missing_platform_package_is_reported(github: FakeGitHub) -> None:
     github.publish("example/toy", "1.0.0", {"toy-1.0.0-otheros.zip": b""})
     (toy,) = service.registry(github.fetch)
-    with pytest.raises(CatalogError, match="has no file toy-1.0.0-testos.zip"):
+    with pytest.raises(CatalogError, match=r"has no file toy-1.0.0-testos.zip"):
         service.install(toy, github.fetch, github.download)
 
 

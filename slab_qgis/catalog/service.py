@@ -81,7 +81,9 @@ class InstallResult:
     cleared_settings: tuple[str, ...] = ()  # runtime settings reset to the package's defaults
 
 
-def install(model: CatalogModel, fetch: Fetch, download: Callable[[str, Path], Path]) -> InstallResult:
+def install(
+    model: CatalogModel, fetch: Fetch, download: Callable[[str, Path], Path]
+) -> InstallResult:
     """Download this platform's package of ``model``'s latest release, install and register it.
 
     An older installed version is unregistered and deleted once the new one is in place. Stored
