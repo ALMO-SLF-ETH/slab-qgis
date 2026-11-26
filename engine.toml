@@ -6,6 +6,6 @@
 # need --engine-wheel (CI builds one from the slab-sweep checkout).
 
 [slab-sweep]
-version = ""
-wheel = ""
-sha256 = ""
+version = "0.1.0"
+wheel = "slab_sweep-0.1.0-py3-none-any.whl"
+sha256 = "4899342c40b095f4972547390c2c8158a770253639bc0fafa9078839c66989b8"
