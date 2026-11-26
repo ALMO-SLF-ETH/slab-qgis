@@ -1,155 +1,20 @@
-# -------------------------
-# C / Build Artifacts
-# -------------------------
-
-# Prerequisites
-*.d
-
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-*.bin
-*.axf
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# Cyclomatic complexity / analysis output
-*.cyclo
-
-# -------------------------
-# IDE / Embedded project files
-# -------------------------
-
-# STM32CubeIDE
-# .cproject
-# .project
-.settings/
-Debug/
-Release/
-
-# Keil uVision
-*.uvproj
-*.uvopt
-*.bak
-*.dep
-*.log
-
-# IAR Embedded Workbench
-*.ewp
-*.eww
-*.iobj
-*.dep
-*.ewd
-
-# Make / CMake build folders
-/build/
-/bin/
-Debug/
-Release/
-
-# -------------------------
-# macOS
-# -------------------------
-.DS_Store
-.AppleDouble
-.LSOverride
-Icon?
-._*
-.Spotlight-V100
-.Trashes
-.apdisk
-
-# -------------------------
-# Python
-# -------------------------
+# Python artifacts
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Distribution / packaging
-build/
-dist/
-eggs/
-*.egg-info/
-.installed.cfg
-*.egg
-pip-wheel-metadata/
-wheels/
-*.whl
-
-# Virtual environments
-venv/
-ENV/
-env/
-.venv/
-.env/
-
-# Testing
 .pytest_cache/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-htmlcov/
-
-# -------------------------
-# IDEs, editors and tooling
-# -------------------------
-.idea/
-.vscode/
-*.sublime-project
-*.sublime-workspace
 .mypy_cache/
+.ruff_cache/
 
-# -------------------------
-# Miscellaneous
-# -------------------------
-celerybeat-schedule
+# Stray run outputs written during manual/headless testing
+tests/run_*/
+tests/output/
+
+# QGIS writes a style database next to the project it opens
+symbology-style.db
+
+# Plugin build output (scripts/build_plugin.py)
+dist/
+slab_qgis/_vendor/
+
+# Inputs and Slab-Pro output of the intro animation (scripts/intro_animation)
+scripts/intro_animation/work/

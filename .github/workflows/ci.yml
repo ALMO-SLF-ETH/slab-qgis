@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff, via pinned pre-commit hooks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Tests (QGIS ${{ matrix.qgis }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The long-term release (3.44, Qt 5, = qgisMinimumVersion) and the current release
+        # (4.x, Qt 6). The code is written to the Qt 5/Qt 6 intersection, so both must pass.
+        qgis: ["ltr", "stable"]
+    container:
+      image: qgis/qgis:${{ matrix.qgis }}
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v7
+        with:
+          path: slab-qgis
+      - name: Checkout engine as a sibling
+        # The plugin tests import the slab-sweep engine; conftest puts a sibling ../slab-sweep/src
+        # on sys.path. Test against the engine branch this change is headed for: main for pull
+        # requests into main (and pushes to main), dev otherwise.
+        uses: actions/checkout@v7
+        with:
+          repository: ALMO-SLF-ETH/slab-sweep
+          ref: ${{ (github.base_ref || github.ref_name) == 'main' && 'main' || 'dev' }}
+          path: slab-sweep
+      - name: Show versions
+        run: |
+          python3 -c "from qgis.core import Qgis; print('QGIS', Qgis.version())"
+          python3 -c "from qgis.PyQt.QtCore import QT_VERSION_STR; print('Qt', QT_VERSION_STR)"
+          python3 --version
+      - name: Install pytest and scipy into QGIS's Python
+        # scipy (release-zone rounding and tapering) ships with QGIS on Windows and macOS but not
+        # in the qgis/qgis images.
+        run: pip install pytest scipy --break-system-packages || pip install pytest scipy
+      - name: Run tests (headless)
+        working-directory: slab-qgis
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: xvfb-run -a python3 -m pytest -q -rs
+
+  package:
+    name: Package plugin zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: slab-qgis
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Engine wheel
+        # The zip bundles the slab-sweep release pinned in engine.toml. Until a release is pinned,
+        # bundle a wheel built from the engine branch this change is headed for.
+        id: engine
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('slab-qgis/engine.toml','rb'))['slab-sweep']['version'])")
+          if [ -n "$version" ]; then
+            echo "Pinned slab-sweep $version"
+            echo "args=" >> "$GITHUB_OUTPUT"
+          else
+            git clone --depth 1 --branch "$ENGINE_REF" https://github.com/ALMO-SLF-ETH/slab-sweep.git
+            python -m pip wheel --no-deps --wheel-dir wheels ./slab-sweep
+            echo "args=--engine-wheel $(ls "$PWD"/wheels/slab_sweep-*.whl)" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          ENGINE_REF: ${{ (github.base_ref || github.ref_name) == 'main' && 'main' || 'dev' }}
+      - name: Build and check the zip
+        # scripts/build_plugin.py also checks the zip: one slab_qgis/ folder with metadata.txt,
+        # LICENSE, the engine and its licence, and no bytecode.
+        run: python slab-qgis/scripts/build_plugin.py ${{ steps.engine.outputs.args }} --out dist
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: slab_qgis-plugin
+          path: dist/*.zip
+
+  smoke:
+    name: Zip loads its bundled engine (QGIS ${{ matrix.qgis }})
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        qgis: ["ltr", "stable"]
+    container:
+      image: qgis/qgis:${{ matrix.qgis }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: slab_qgis-plugin
+          path: dist
+      - name: Smoke-test the zip in QGIS's Python, with no engine installed
+        run: python3 scripts/smoke_zip.py dist/slab_qgis-*.zip

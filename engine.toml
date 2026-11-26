@@ -1,0 +1,11 @@
+# The slab-sweep engine bundled into the plugin zip (slab_qgis/_vendor/).
+#
+# scripts/build_plugin.py downloads this wheel from the slab-sweep GitHub release and checks its
+# SHA-256 before unpacking it. The bump-engine workflow updates this file in a pull request when
+# slab-sweep publishes a release. An empty version means "no release pinned yet": builds then
+# need --engine-wheel (CI builds one from the slab-sweep checkout).
+
+[slab-sweep]
+version = ""
+wheel = ""
+sha256 = ""

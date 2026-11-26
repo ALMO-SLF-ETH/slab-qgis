@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "id": "slab-pro",
+      "name": "Slab-Pro",
+      "description": "Depth-averaged mass-movement runout model.",
+      "repository": "ALMO-SLF-ETH/Slab-Pro",
+      "homepage": "https://github.com/ALMO-SLF-ETH/Slab-Pro",
+      "assets": {
+        "windows-x86_64": "slab-pro-{version}-windows-x86_64.zip",
+        "linux-x86_64": "slab-pro-{version}-linux-x86_64.tar.gz",
+        "macos-arm64": "slab-pro-{version}-macos-arm64.tar.gz"
+      }
+    }
+  ]
+}

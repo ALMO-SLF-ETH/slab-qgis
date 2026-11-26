@@ -1,0 +1,62 @@
+name: Bump bundled engine
+
+# Opens (or updates) a pull request into dev that pins the latest slab-sweep release in
+# engine.toml, so the next plugin release bundles it. Runs when slab-sweep's release workflow
+# sends a repository_dispatch, daily as a fallback, and on demand.
+#
+# Pull requests opened with the default GITHUB_TOKEN do not start other workflows, so CI would not
+# run on them. Set the secret SLAB_QGIS_BOT_TOKEN (a GitHub App or fine-grained token with
+# contents and pull-requests write on this repository) to get CI on the bump PR; without it, close
+# and reopen the PR to start CI. "Allow GitHub Actions to create and approve pull requests" must be
+# enabled in the repository's Actions settings.
+
+on:
+  repository_dispatch:
+    types: [slab-sweep-released]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "slab-sweep release tag to pin (default: latest)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-engine
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Pin the release in engine.toml
+        id: pin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || (github.event.client_payload.version && format('v{0}', github.event.client_payload.version)) || '' }}
+        run: python scripts/bump_engine.py ${TAG:+--tag "$TAG"}
+      - name: Open or update the pull request
+        if: steps.pin.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.SLAB_QGIS_BOT_TOKEN || github.token }}
+          base: dev
+          branch: bump/slab-sweep
+          delete-branch: true
+          add-paths: engine.toml
+          commit-message: Bundle slab-sweep ${{ steps.pin.outputs.version }}
+          title: Bundle slab-sweep ${{ steps.pin.outputs.version }}
+          body: |
+            Pins slab-sweep [${{ steps.pin.outputs.version }}](https://github.com/ALMO-SLF-ETH/slab-sweep/releases/tag/v${{ steps.pin.outputs.version }}) in `engine.toml`, so the next plugin release bundles it.
+
+            Opened by the bump-engine workflow. CI builds the zip with this engine and smoke-tests it on QGIS LTR and stable.

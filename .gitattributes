@@ -1,2 +1,8 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalise line endings: LF in the repo, checked out as-is.
+* text=auto eol=lf
+
+# Binary / non-diffable assets
+*.png binary
+*.tif binary
+*.tiff binary
+*.qgz binary

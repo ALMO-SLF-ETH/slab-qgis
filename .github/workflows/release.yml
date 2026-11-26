@@ -1,0 +1,125 @@
+name: Release
+
+# Push a tag vX.Y.Z on main (matching metadata.txt's version) to publish a plugin release:
+#   1. build the zip with the slab-sweep release pinned in engine.toml, and check it,
+#   2. smoke-test that zip on QGIS LTR and stable,
+#   3. create the GitHub release with the zip,
+#   4. publish plugins.xml on GitHub Pages, so QGIS installs and updates the plugin from
+#      https://almo-slf-eth.github.io/slab-qgis/plugins.xml, and models.json, the list of models
+#      the plugin offers (Settings > Pages > Source must be "GitHub Actions").
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Tag matches metadata.txt; an engine release is pinned
+        id: version
+        run: |
+          python - <<'PY'
+          import configparser, os, tomllib
+          meta = configparser.ConfigParser(interpolation=None)
+          meta.read("slab_qgis/metadata.txt", encoding="utf-8")
+          version = meta["general"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          assert tag == f"v{version}", f"tag {tag} does not match metadata.txt version {version}"
+          pin = tomllib.load(open("engine.toml", "rb"))["slab-sweep"]
+          assert pin["version"], "engine.toml pins no slab-sweep release; a release must bundle one"
+          print(f"Slab-QGIS {version} with slab-sweep {pin['version']}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"version={version}\n")
+          PY
+      - name: Build the zip and plugins.xml
+        run: >-
+          python scripts/build_plugin.py --out dist
+          --plugins-xml "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+      - name: Models registry for the Pages site
+        run: cp slab_qgis/resources/models.json dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/*
+
+  smoke:
+    name: Smoke test (QGIS ${{ matrix.qgis }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        qgis: ["ltr", "stable"]
+    container:
+      image: qgis/qgis:${{ matrix.qgis }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+      - run: python3 scripts/smoke_zip.py dist/slab_qgis-*.zip
+
+  github-release:
+    name: GitHub release
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Slab-QGIS ${{ needs.build.outputs.version }}
+          generate_release_notes: true
+          files: dist/*.zip
+
+  pages:
+    name: Publish the plugin repository index
+    needs: github-release
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}plugins.xml
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+      - name: Assemble the site
+        run: |
+          mkdir site
+          cp dist/plugins.xml dist/models.json site/
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Slab-QGIS plugin repository</title>
+          <h1>Slab-QGIS plugin repository</h1>
+          <p>In QGIS, open <b>Plugins &rsaquo; Manage and Install Plugins &rsaquo; Settings</b>,
+          add a repository with the URL below, then install <b>Slab-QGIS</b>
+          (tick <i>Show also experimental plugins</i> while it is experimental).</p>
+          <pre>https://almo-slf-eth.github.io/slab-qgis/plugins.xml</pre>
+          <p><a href="https://github.com/ALMO-SLF-ETH/slab-qgis">Source and documentation</a></p>
+          HTML
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v5
