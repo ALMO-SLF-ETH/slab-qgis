@@ -15,3 +15,6 @@ symbology-style.db
 # Plugin build output (scripts/build_plugin.py)
 dist/
 slab_qgis/_vendor/
+
+# Inputs and Slab-Pro output of the intro animation (scripts/intro_animation)
+scripts/intro_animation/work/

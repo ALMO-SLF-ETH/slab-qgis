@@ -36,10 +36,20 @@ class SlabQgisPlugin:
         self._action.setToolTip("Show or hide the Slab-QGIS panel")
         self._action.toggled.connect(self._panel.setVisible)
         self._panel.visibilityChanged.connect(self._action.setChecked)
+        # triggered, unlike toggled, fires only when the user clicks the button or menu entry,
+        # not when QGIS restores the panel at start-up.
+        self._action.triggered.connect(self._on_opened_by_user)
 
         self.iface.addToolBarIcon(self._action)
         self.iface.addPluginToMenu(PLUGIN_NAME, self._action)
         self._check_for_updates()
+
+    def _on_opened_by_user(self, checked: bool) -> None:
+        """Play the intro animation over QGIS when the user opens the panel."""
+        if checked:
+            from slab_qgis.panels.intro import show_intro
+
+            show_intro(self.iface.mainWindow())
 
     def _check_for_updates(self) -> None:
         """At most once a day, look for newer releases of installed models (in the background)."""
