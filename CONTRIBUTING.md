@@ -10,10 +10,12 @@
 - Merge with **"Create a merge commit"**, not squash or rebase, so commit hashes stay the same on
   `dev`, the topic branches and `main` (the same rule as Slab-Pro and slab-sweep).
 - Keep commits focused, with an imperative subject line ("Load failed runs", not "loaded…").
+- Note user-visible changes under *Unreleased* in [CHANGELOG.md](CHANGELOG.md).
 - The plugin never contains model-specific code: anything a model needs comes from its manifest.
   Engine logic belongs in [slab-sweep](https://github.com/ALMO-SLF-ETH/slab-sweep), not here.
 
 ## Development setup, tests and linting
 
-See the [README](README.md#development): the tests run under QGIS's own Python, with a sibling
-`slab-sweep` checkout; `pre-commit run --all-files` runs the linters as CI does.
+See [docs/development.md](docs/development.md): the tests run under QGIS's own Python, with a
+sibling `slab-sweep` checkout; `pre-commit run --all-files` runs the linters as CI does.
+Publishing a release is described in [RELEASING.md](RELEASING.md).

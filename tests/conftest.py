@@ -1,7 +1,7 @@
 """Shared fixtures for the Slab-QGIS plugin tests.
 
-These tests must run under a QGIS Python interpreter (they import ``qgis``). See the README
-for how to invoke pytest through QGIS's interpreter.
+These tests must run under a QGIS Python interpreter (they import ``qgis``). See
+docs/development.md for how to invoke pytest through QGIS's interpreter.
 
 If the sibling ``slab-sweep`` engine is not installed into this interpreter, its ``src`` is
 put on ``sys.path`` so the tests can exercise manifest-driven UI without a prior install.
